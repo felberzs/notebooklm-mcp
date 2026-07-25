@@ -185,27 +185,15 @@ See [ROADMAP.md](./ROADMAP.md) for planned features and version history.
 - **v2.1.0** — `note_list` and `note_get` MCP tools (#17)
 - **v2.0.4** — German UI selectors (closes #14)
 - **v2.0.0** — Tools renamed to a namespaced tree (`notebook_ask`, `source_add`, `session_list`, `server_health`, `vault_batch`…) across 9 namespaces; `tools/list` advertises only the canonical names. **Backward compatible — the legacy flat names still work as aliases**, so existing scripts and configs keep running. Also adds MCP `annotations` (read-only / destructive / idempotent / open-world hints) and `outputSchema` + `structuredContent` on every tool. Published on the [Smithery registry](https://smithery.ai/servers/roomifields/notebooklm-mcp).
-- **v1.7.9** — Security: resolve moderate XSS advisory GHSA-v2v4-37r5-5v8g in transitive `ip-address ≤10.1.0` (pulled in via `@modelcontextprotocol/sdk` → `express-rate-limit`) by pinning `ip-address ^10.2.0` in `overrides`. `npm audit` clean. Unblocks the CI security gate that 1.7.8 had been failing.
-- **v1.7.8** — `add_source` false-negative fix (verified at runtime against a live MCP session this time): the count-based success detection now runs on every poll cycle instead of only after the upload dialog closes, since NotebookLM 2026 keeps the dialog open to allow chained uploads. Also fixes a long-standing packaging bug where `dist/index.js` was published in mode 644 (no `+x`), causing silent `Permission denied` failures in sandbox shells
-- **v1.7.7** — `add_source` defensive patch: broaden selectors to cover the empty/fresh-notebook "Upload sources" CTA (EN+FR), and replace the bare `Could not find "Add source" button` error with a structured DOM dump (URL, title, top 25 buttons + their aria-label/text/class) so the next iteration can be precise. Not validated runtime — the enriched diagnostic is the deliverable
-- **v1.7.6** — Fixes two tools shipped in 1.7.4 without live-runtime validation: (1) `create_notebook` now waits for the final UUID-based URL (no more `notebook/creating/c`) and verifies the rename actually applied (returns `name_applied`/`actual_name`); (2) `delete_notebooks_from_nblm` now uses the same id-based DOM strategy as `list_notebooks_from_nblm` (the old `button[aria-labelledby*="project-"]` selector was broken on the current NotebookLM DOM)
-- **v1.7.5** — Three end-user bugs fixed: (1) `/plugin marketplace update roomi-fields` + `/reload-plugins` now actually upgrades the running MCP (npx pin in `plugin.json`); (2) `list_notebooks_from_nblm` no longer hardcodes `"Notebook"` as title — id-based scrape returns real names; (3) `get_health.current_account` no longer returns a stale email after `re_auth`
-- **v1.7.4** — Expose `create_notebook` and `delete_notebooks_from_nblm` as MCP tools (handlers existed but lacked a tool definition + dispatch case); 30/30 alignment audit passes
-- **v1.7.3** — Fix: `list_notebooks_from_nblm` MCP tool was declared but unreachable (missing dispatch case) — now resolves correctly
-- **v1.7.2** — Claude Code plugin manifest (`.claude-plugin/plugin.json`) + cross-file version sync script enforced in CI; README "Install via Claude Code marketplace" one-liner
 - **v1.7.0** — `batch_to_vault` exposed as a first-class MCP tool (parity with the HTTP endpoint, no localhost server required); shared `runBatchToVault` helper deduplicates the loop across both transports
 - **v1.6.0** — `/batch-to-vault` endpoint + RTFM integration (`nblm-answer-v1` JSON Schema published at [schemas.roomi-fields.com/nblm-answer-v1.json](https://schemas.roomi-fields.com/nblm-answer-v1.json)) for caching NotebookLM answers as a searchable markdown vault
-- **v1.5.9** — Restore `mcpName` field for MCP Registry npm-package ownership verification
 - **v1.5.8** — NotebookLM 2026 UI adaptations (icon-label sanitization, Discussion-panel recovery, count-based source detection) — PR #5 by @KhizarJamshaidIqbal
 - **v1.5.7** — Citation extraction selector fix (`.highlighted`) and Docker multi-stage build — PR #1 by @JulienCANTONI
 - **v1.5.6** — Citation extraction major rewrite (97% success rate), browser-verified auth at startup, profile auto-sync
-- **v1.5.5** — Multi-account state-path bug fix, Windows startup scripts, hidden-window MCP proxy
-- **v1.5.4** — Mid-session auto-reauth with stored credentials, TOTP support
-- **v1.5.3** — Docker deployment with noVNC for visual authentication + NAS support (Synology, QNAP)
-- **v1.5.2** — Notebook scraping from NotebookLM + Bulk delete + Bug fixes
-- **v1.5.1** — Multilingual UI support (FR/EN) with i18n selector system + E2E tests (76 tests)
 - **v1.5.0** — Complete Studio content generation (video, infographic, presentation, data_table) + Notes management + Delete sources
 - **v1.4.0** — Content management (sources, audio, generation) + Multi-account
+
+_Intermediate patch and hardening releases (1.5.x–1.7.x) are in the full [CHANGELOG](./CHANGELOG.md)._
 
 **Not yet implemented:**
 
