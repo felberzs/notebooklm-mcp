@@ -5,6 +5,8 @@ import type { BrowserOptions } from '../config.js';
 describe('Config Module', () => {
   describe('NOTEBOOKLM_AUTH_URL', () => {
     it('should export the correct auth URL', () => {
+      // The login continue-target is Google's documented canonical host
+      // (notebooklm.google.com); per-account redirects are followed from there.
       expect(NOTEBOOKLM_AUTH_URL).toBe(
         'https://accounts.google.com/v3/signin/identifier?continue=https%3A%2F%2Fnotebooklm.google.com%2F&flowName=GlifWebSignIn&flowEntry=ServiceLogin'
       );

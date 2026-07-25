@@ -9,6 +9,7 @@
 import fs from 'fs';
 import path from 'path';
 import { CONFIG } from '../config.js';
+import { isNotebookHost } from '../utils/notebook-domain.js';
 import { log } from '../utils/logger.js';
 import type {
   NotebookEntry,
@@ -237,7 +238,7 @@ export class NotebookLibrary {
     try {
       const urlObj = new URL(url);
       return (
-        urlObj.hostname === 'notebooklm.google.com' &&
+        isNotebookHost(urlObj.hostname) &&
         urlObj.pathname.startsWith('/notebook/') &&
         urlObj.pathname.length > '/notebook/'.length
       );

@@ -72,6 +72,11 @@ export class BrowserSession {
     this.sessionId = sessionId;
     this.sharedContextManager = sharedContextManager;
     this.authManager = authManager;
+    // Use the URL as supplied — it comes from the user's own address bar, i.e.
+    // their account's resolved host (personal → notebooklm.google.com, some
+    // Workspace tenants → notebook.google.com). We follow Google's redirect and
+    // accept BOTH hosts on success; forcing a single host would push the other
+    // tenant through a fragile accounts.google.com re-auth ("session expired").
     this.notebookUrl = notebookUrl;
     this.overrideHeadless = overrideHeadless;
     this.createdAt = Date.now();

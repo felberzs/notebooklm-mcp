@@ -55,6 +55,7 @@ describe('BrowserSession', () => {
       );
 
       expect(session.sessionId).toBe('test-session-1');
+      // The notebook URL is used as supplied (no host rewriting).
       expect(session.notebookUrl).toBe('https://notebooklm.google.com/notebook/test123');
       expect(session.messageCount).toBe(0);
     });
@@ -142,6 +143,7 @@ describe('BrowserSession', () => {
       const info = session.getInfo();
 
       expect(info.id).toBe('test-session-7');
+      // The notebook URL is used as supplied (no host rewriting).
       expect(info.notebook_url).toBe('https://notebooklm.google.com/notebook/test123');
       expect(info.message_count).toBe(0);
       expect(info.age_seconds).toBeGreaterThanOrEqual(0);

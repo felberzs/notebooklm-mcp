@@ -29,6 +29,7 @@ import type {
   LibraryStats,
 } from '../library/types.js';
 import { CONFIG, applyBrowserOptions, type BrowserOptions } from '../config.js';
+import { NOTEBOOK_BASE_URL, NOTEBOOK_PRIMARY_HOST } from '../utils/notebook-domain.js';
 import { log } from '../utils/logger.js';
 import type {
   AskQuestionResult,
@@ -3515,7 +3516,7 @@ export class ToolHandlers {
         log.info('  📄 Navigating to NotebookLM homepage...');
 
         // Navigate to NotebookLM homepage
-        await page.goto('https://notebooklm.google.com/', {
+        await page.goto(NOTEBOOK_BASE_URL, {
           waitUntil: 'domcontentloaded',
           timeout: 60000,
         });
@@ -3614,7 +3615,7 @@ export class ToolHandlers {
         for (const { id, name } of scraped) {
           if (seenIds.has(id)) continue;
           seenIds.add(id);
-          const url = `https://notebooklm.google.com/notebook/${id}`;
+          const url = `https://${NOTEBOOK_PRIMARY_HOST}/notebook/${id}`;
           notebooks.push({ id, name, url });
           log.info(`    📓 Found: ${name} (${id.substring(0, 8)}...)`);
         }
@@ -3634,7 +3635,7 @@ export class ToolHandlers {
             const id = match.replace('project-', '');
             if (seenIds.has(id)) continue;
             seenIds.add(id);
-            const url = `https://notebooklm.google.com/notebook/${id}`;
+            const url = `https://${NOTEBOOK_PRIMARY_HOST}/notebook/${id}`;
             notebooks.push({ id, name: '', url });
             log.warning(
               `    📓 Found id only (no title hydrated): ${id.substring(0, 8)}... (name empty, not "Notebook")`
@@ -3722,7 +3723,7 @@ export class ToolHandlers {
 
           try {
             // Navigate to homepage
-            await page.goto('https://notebooklm.google.com/', {
+            await page.goto(NOTEBOOK_BASE_URL, {
               waitUntil: 'domcontentloaded',
               timeout: 30000,
             });
@@ -3914,7 +3915,7 @@ export class ToolHandlers {
         log.info('  📄 Navigating to NotebookLM homepage...');
 
         // Navigate to NotebookLM homepage
-        await page.goto('https://notebooklm.google.com/', {
+        await page.goto(NOTEBOOK_BASE_URL, {
           waitUntil: 'networkidle',
           timeout: 30000,
         });
