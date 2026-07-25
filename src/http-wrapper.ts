@@ -9,6 +9,9 @@ import express, { Request, Response, NextFunction } from 'express';
 import { randomUUID } from 'crypto';
 import net from 'net';
 import { execSync } from 'child_process';
+import { readFileSync } from 'fs';
+import { dirname, join } from 'path';
+import { fileURLToPath } from 'url';
 import { AuthManager } from './auth/auth-manager.js';
 import { SessionManager } from './session/session-manager.js';
 import { NotebookLibrary } from './library/notebook-library.js';
@@ -1141,7 +1144,11 @@ app.use((err: Error, req: Request, res: Response, _next: NextFunction) => {
 // Start server with startup sequence
 const PORT = Number(process.env.HTTP_PORT) || 3000;
 const HOST = process.env.HTTP_HOST || '0.0.0.0';
-const VERSION = '1.5.3';
+const VERSION = (
+  JSON.parse(
+    readFileSync(join(dirname(fileURLToPath(import.meta.url)), '..', 'package.json'), 'utf-8')
+  ) as { version: string }
+).version;
 
 const startupManager = new StartupManager(authManager);
 
