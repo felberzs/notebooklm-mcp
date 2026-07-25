@@ -7,6 +7,45 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [2.2.1] - 2026-07-25
+
+### Fixed — Workspace accounts whose app lives on `notebook.google.com` were not recognized (#19)
+
+NotebookLM is reachable at two hosts: `notebooklm.google.com` (Google's
+documented canonical host) and `notebook.google.com` (the "Gemini Notebook"
+alias). Which one an **authenticated** session resolves to is account-dependent
+— some Workspace tenants land on `notebook.google.com` (their service-session
+cookie is bound there). The tool hard-coded `notebooklm.google.com` in every
+detection/validation check, so for those accounts it rejected pasted notebook
+URLs and never detected login success ("session expired server-side" with valid
+cookies).
+
+All host checks now accept **both** hosts via a single `isNotebookHost` /
+`isNotebookUrl` module; navigation still targets the documented canonical host
+and follows Google's redirect. URL parsing also replaces a substring
+`includes()` that could false-match an `accounts.google.com` sign-in URL
+carrying `?continue=…notebooklm.google.com`. Validated end-to-end on a real
+personal account (interactive login + `notebook_ask` on live notebooks).
+Thanks to @kpietkaa, who diagnosed the Workspace host-scoping and drove the
+revised patch.
+
+### Fixed — notebook listing was ~30s slower after the "Gemini Notebook" rebrand
+
+The rebrand changed the homepage notebook-card title wrapper from a `<button>`
+to an `<a>`. The scrape's initial `waitForSelector` still targeted the
+`<button>`, so on any account that owns notebooks it timed out a full 30s
+before the (already tag-agnostic) id-based scan found them. Listing was correct
+but took ~34s; it now resolves in ~5s. The wait now matches the stable
+`project-{uuid}-title` id instead of a specific tag.
+
+### Fixed — HTTP startup banner showed a hard-coded version
+
+`http-wrapper.ts` printed `v1.5.3` regardless of the real package version. It
+now reads `package.json` at runtime (same as the MCP entrypoint), so the banner
+can never drift again.
+
+---
+
 ## [2.2.0] - 2026-07-11
 
 ### Fixed — new-answer detection could time out on a repeated answer text
