@@ -3526,10 +3526,17 @@ export class ToolHandlers {
         await sendProgress?.('Waiting for notebooks to load...', 2, 5);
         log.info('  ⏳ Waiting for notebooks to appear...');
 
-        // Wait up to 30 seconds for notebook cards to appear
-        // NotebookLM uses buttons with aria-labelledby="project-{UUID}-title"
+        // Wait up to 30 seconds for notebook cards to appear.
+        // Tag-agnostic on purpose: NotebookLM wrapped the title in a <button>,
+        // then switched to an <a> with the "Gemini Notebook" rebrand. Only the
+        // id `project-{UUID}-title` is stable (see Strategy 1 below). Match the
+        // aria-labelledby reference (any tag) OR the id itself, so a future tag
+        // change can never cost a full 30s timeout on a populated account.
         try {
-          await page.waitForSelector('button[aria-labelledby*="project-"]', { timeout: 30000 });
+          await page.waitForSelector(
+            'a[aria-labelledby*="project-"], button[aria-labelledby*="project-"], [id^="project-"][id$="-title"]',
+            { timeout: 30000 }
+          );
         } catch {
           log.warning('  ⚠️ No notebook links found after 30s wait');
           // Debug: log current URL and page content
