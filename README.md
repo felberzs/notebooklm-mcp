@@ -179,6 +179,11 @@ See [ROADMAP.md](./ROADMAP.md) for planned features and version history.
 
 **Latest releases:**
 
+- **v2.2.1** — Recognize both NotebookLM hosts so **Google Workspace** accounts authenticate (the `notebook.google.com` alias); notebook listing no longer wastes ~30s after the "Gemini Notebook" rebrand; HTTP banner reads the real version. Diagnosis + patch by @kpietkaa (#19)
+- **v2.2.0** — Fix new-answer detection timing out when an answer repeats an earlier one (position-based identity, not text-hash); graceful shutdown on stdio disconnect; **Japanese** UI locale
+- **v2.1.1** — Thai UI selectors for `notebook_create` (partial, #18)
+- **v2.1.0** — `note_list` and `note_get` MCP tools (#17)
+- **v2.0.4** — German UI selectors (closes #14)
 - **v2.0.0** — Tools renamed to a namespaced tree (`notebook_ask`, `source_add`, `session_list`, `server_health`, `vault_batch`…) across 9 namespaces; `tools/list` advertises only the canonical names. **Backward compatible — the legacy flat names still work as aliases**, so existing scripts and configs keep running. Also adds MCP `annotations` (read-only / destructive / idempotent / open-world hints) and `outputSchema` + `structuredContent` on every tool. Published on the [Smithery registry](https://smithery.ai/servers/roomifields/notebooklm-mcp).
 - **v1.7.9** — Security: resolve moderate XSS advisory GHSA-v2v4-37r5-5v8g in transitive `ip-address ≤10.1.0` (pulled in via `@modelcontextprotocol/sdk` → `express-rate-limit`) by pinning `ip-address ^10.2.0` in `overrides`. `npm audit` clean. Unblocks the CI security gate that 1.7.8 had been failing.
 - **v1.7.8** — `add_source` false-negative fix (verified at runtime against a live MCP session this time): the count-based success detection now runs on every poll cycle instead of only after the upload dialog closes, since NotebookLM 2026 keeps the dialog open to allow chained uploads. Also fixes a long-standing packaging bug where `dist/index.js` was published in mode 644 (no `+x`), causing silent `Permission denied` failures in sandbox shells
