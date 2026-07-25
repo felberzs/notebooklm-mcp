@@ -2,7 +2,7 @@
 
 # NotebookLM REST API + MCP server
 
-**Automate Google NotebookLM at scale. 33-endpoint HTTP REST API for n8n / Zapier / Make / curl, plus an MCP server for Claude Code / Cursor / Codex. Citation-backed Q&A, full Studio generation (audio · video · infographic · report · presentation · data table), multi-account rotation with auto-reauth.**
+**Automate Google NotebookLM at scale. 33-endpoint HTTP REST API for n8n / Zapier / Make / curl, plus an MCP server for Claude Code / Cursor / Codex. Citation-backed Q&A, full Studio generation (audio · video · infographic · report · presentation · data table), multi-account rotation with auto-reauth across personal and Google Workspace accounts.**
 
 > v2.2.1 — production-grade, batch-tested on overnight runs of 1 000+ questions. Tools are now a namespaced tree (`notebook_ask`, `source_add`, `session_list`…) with MCP `annotations` + `outputSchema` on every tool — **the old flat names still work as aliases, nothing breaks**. See the [changelog](./CHANGELOG.md) for the full mapping. [Compare with `PleasePrompto/notebooklm-mcp` v2.0.0](https://roomi-fields.github.io/notebooklm-mcp/compare) to see when this project is the right pick (REST API, full Studio, auto-reauth) and when the MCP-only upstream is.
 
@@ -60,6 +60,11 @@ Generate multiple content types from your notebook sources:
 - **Search notebooks** by keyword in name, description, or topics
 - **Scrape notebooks**: List all notebooks from NotebookLM with IDs and names
 - **Bulk delete**: Delete multiple notebooks at once
+
+### Accounts & Localization
+
+- **Personal _and_ Google Workspace accounts** — recognizes both NotebookLM hosts (`notebooklm.google.com` and the `notebook.google.com` Workspace alias), so Workspace sessions authenticate cleanly instead of looping on "session expired"
+- **UI-language-aware** — drives NotebookLM whether its interface is in English, French, German, or Japanese (`en` · `fr` · `de` · `ja`); [add a language](./docs/ADDING_A_LANGUAGE.md) in a single JSON file
 
 ### Integration Options
 
