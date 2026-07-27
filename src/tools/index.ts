@@ -29,7 +29,11 @@ import type {
   LibraryStats,
 } from '../library/types.js';
 import { CONFIG, applyBrowserOptions, type BrowserOptions } from '../config.js';
-import { NOTEBOOK_BASE_URL, NOTEBOOK_PRIMARY_HOST, withUiLocale } from '../utils/notebook-domain.js';
+import {
+  NOTEBOOK_BASE_URL,
+  NOTEBOOK_PRIMARY_HOST,
+  withUiLocale,
+} from '../utils/notebook-domain.js';
 import { log } from '../utils/logger.js';
 import type {
   AskQuestionResult,
