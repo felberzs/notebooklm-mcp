@@ -642,6 +642,100 @@ app.put('/notebooks/:id/activate', async (req: Request, res: Response) => {
   }
 });
 
+// Get notebook sharing status (RPC extension)
+app.get('/notebooks/:id/share', async (req: Request, res: Response) => {
+  try {
+    res.json(await toolHandlers.handleNotebookSharing({ notebook_id: req.params.id }));
+  } catch (error) {
+    res
+      .status(500)
+      .json({ success: false, error: error instanceof Error ? error.message : String(error) });
+  }
+});
+
+// Toggle the public link (RPC extension). Body: { public: boolean }
+app.put('/notebooks/:id/share', async (req: Request, res: Response) => {
+  try {
+    res.json(
+      await toolHandlers.handleNotebookSharing({
+        notebook_id: req.params.id,
+        set_public: req.body?.public === true,
+      })
+    );
+  } catch (error) {
+    res
+      .status(500)
+      .json({ success: false, error: error instanceof Error ? error.message : String(error) });
+  }
+});
+
+// Generate a study aid (flashcards/quiz) — RPC extension. Body: { notebook_url, kind, focus }
+app.post('/content/study-aid', async (req: Request, res: Response) => {
+  try {
+    const { notebook_url, notebook_id, kind, focus } = req.body || {};
+    res.json(await toolHandlers.handleGenerateStudyAid({ notebook_url, notebook_id, kind, focus }));
+  } catch (error) {
+    res
+      .status(500)
+      .json({ success: false, error: error instanceof Error ? error.message : String(error) });
+  }
+});
+
+// Discover web sources — RPC extension. Body: { notebook_url, query, import }
+app.post('/content/research', async (req: Request, res: Response) => {
+  try {
+    const { notebook_url, notebook_id, query, import: imp } = req.body || {};
+    res.json(
+      await toolHandlers.handleResearchSources({ notebook_url, notebook_id, query, import: imp })
+    );
+  } catch (error) {
+    res
+      .status(500)
+      .json({ success: false, error: error instanceof Error ? error.message : String(error) });
+  }
+});
+
+// Generate + save a mind map — RPC extension. Body: { notebook_url, title }
+app.post('/content/mind-map', async (req: Request, res: Response) => {
+  try {
+    const { notebook_url, notebook_id, title } = req.body || {};
+    res.json(await toolHandlers.handleGenerateMindMap({ notebook_url, notebook_id, title }));
+  } catch (error) {
+    res
+      .status(500)
+      .json({ success: false, error: error instanceof Error ? error.message : String(error) });
+  }
+});
+
+// Manage source labels — RPC extension. GET = list; POST = { action, name, emoji, label_ids }
+app.get('/notebooks/:id/labels', async (req: Request, res: Response) => {
+  try {
+    res.json(await toolHandlers.handleLabels({ notebook_id: req.params.id, action: 'list' }));
+  } catch (error) {
+    res
+      .status(500)
+      .json({ success: false, error: error instanceof Error ? error.message : String(error) });
+  }
+});
+app.post('/notebooks/:id/labels', async (req: Request, res: Response) => {
+  try {
+    const { action, name, emoji, label_ids } = req.body || {};
+    res.json(
+      await toolHandlers.handleLabels({
+        notebook_id: req.params.id,
+        action,
+        name,
+        emoji,
+        label_ids,
+      })
+    );
+  } catch (error) {
+    res
+      .status(500)
+      .json({ success: false, error: error instanceof Error ? error.message : String(error) });
+  }
+});
+
 // List sessions
 app.get('/sessions', async (_req: Request, res: Response) => {
   try {

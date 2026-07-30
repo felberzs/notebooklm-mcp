@@ -16,6 +16,7 @@
  */
 
 import fs from 'fs';
+import path from 'path';
 import { LEGACY_TO_CANONICAL } from './tool-names.js';
 import { SessionManager } from '../session/session-manager.js';
 import { AuthManager } from '../auth/auth-manager.js';
@@ -50,6 +51,20 @@ import { RateLimitError } from '../errors.js';
 import { CleanupManager } from '../utils/cleanup-manager.js';
 import { randomDelay } from '../utils/stealth-utils.js';
 import type { Page } from 'patchright';
+import { BatchExecuteClient } from '../rpc/batchexecute.js';
+import { NotebookRpc } from '../rpc/notebooks-rpc.js';
+import { SourcesRpc } from '../rpc/sources-rpc.js';
+import { QueryRpc } from '../rpc/query-rpc.js';
+import { StudioRpc, type StudioType } from '../rpc/studio-rpc.js';
+import { SharingRpc, type ShareStatus } from '../rpc/sharing-rpc.js';
+import {
+  MindMapRpc,
+  LabelsRpc,
+  ResearchRpc,
+  type MindMapResult,
+  type Label,
+  type DiscoveredSource,
+} from '../rpc/extensions-rpc.js';
 import { ContentManager } from '../content/content-manager.js';
 import { runBatchToVault, type BatchToVaultResult } from '../utils/vault-writer.js';
 import type {
@@ -1529,6 +1544,118 @@ User: "Yes" → call remove_notebook`,
         required: ['note_title'],
       },
     },
+    {
+      name: 'share_notebook',
+      description:
+        'Read a notebook’s sharing status, or toggle its public link. ' +
+        'Omit `set_public` to just read status (public link on/off, owner/collaborators). ' +
+        'Set `set_public: true`/`false` to enable/disable the public link. RPC-backed (no browser).',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          notebook_url: { type: 'string', description: 'NotebookLM notebook URL.' },
+          notebook_id: {
+            type: 'string',
+            description: 'Notebook UUID (alternative to notebook_url).',
+          },
+          set_public: {
+            type: 'boolean',
+            description:
+              'Optional. true = enable public link, false = restrict. Omit to only read status.',
+          },
+        },
+      },
+    },
+    {
+      name: 'generate_study_aid',
+      description:
+        'Generate a study aid from a notebook’s sources: flashcards or a quiz. ' +
+        'RPC-backed (no browser). Returns when generation completes.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          kind: {
+            type: 'string',
+            enum: ['flashcards', 'quiz'],
+            description: 'Which study aid to generate.',
+          },
+          notebook_url: { type: 'string', description: 'NotebookLM notebook URL.' },
+          notebook_id: {
+            type: 'string',
+            description: 'Notebook UUID (alternative to notebook_url).',
+          },
+          focus: { type: 'string', description: 'Optional focus prompt to steer the content.' },
+        },
+        required: ['kind'],
+      },
+    },
+    {
+      name: 'generate_mind_map',
+      description:
+        'Generate and save a mind map from a notebook’s sources. RPC-backed (no browser). ' +
+        'Returns the saved mind-map id and its JSON structure.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          notebook_url: { type: 'string', description: 'NotebookLM notebook URL.' },
+          notebook_id: {
+            type: 'string',
+            description: 'Notebook UUID (alternative to notebook_url).',
+          },
+          title: { type: 'string', description: 'Optional title for the saved mind map.' },
+        },
+      },
+    },
+    {
+      name: 'manage_labels',
+      description:
+        'Manage a notebook’s source labels (RPC-backed): list them, create one, or delete some. ' +
+        'action=list (default) / create (needs name) / delete (needs label_ids).',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          notebook_url: { type: 'string', description: 'NotebookLM notebook URL.' },
+          notebook_id: {
+            type: 'string',
+            description: 'Notebook UUID (alternative to notebook_url).',
+          },
+          action: {
+            type: 'string',
+            enum: ['list', 'create', 'delete'],
+            description: 'Default list.',
+          },
+          name: { type: 'string', description: 'Label name (for create).' },
+          emoji: { type: 'string', description: 'Optional label emoji (for create).' },
+          label_ids: {
+            type: 'array',
+            items: { type: 'string' },
+            description: 'Label ids to delete (for delete).',
+          },
+        },
+      },
+    },
+    {
+      name: 'research_sources',
+      description:
+        'Discover web sources for a notebook via NotebookLM Fast Research. RPC-backed. ' +
+        'Returns the found sources; set `import: true` to also add them to the notebook.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          query: { type: 'string', description: 'What to research on the web.' },
+          notebook_url: { type: 'string', description: 'NotebookLM notebook URL.' },
+          notebook_id: {
+            type: 'string',
+            description: 'Notebook UUID (alternative to notebook_url).',
+          },
+          import: {
+            type: 'boolean',
+            description: 'If true, import the discovered sources into the notebook.',
+          },
+        },
+        required: ['query'],
+      },
+    },
   ];
 
   // Rename to canonical (v2) names and attach the shared output
@@ -1660,6 +1787,57 @@ export class ToolHandlers {
                 `Or set an active notebook: PUT /notebooks/${allNotebooks[0].id}/activate`
             );
           }
+        }
+      }
+
+      // RPC path (default) for a fresh single-turn ask (no session_id): query
+      // the streaming endpoint directly — no browser — with structured
+      // citations parsed from the response. Follow-ups (session_id present)
+      // keep the browser session for conversation continuity. Falls back on
+      // any RPC failure.
+      const askNotebookId = resolvedNotebookUrl
+        ? this.notebookIdFromUrl(resolvedNotebookUrl)
+        : null;
+      if (this.useRpcTransport() && !session_id && askNotebookId) {
+        try {
+          await sendProgress?.('Asking NotebookLM (RPC)...', 2, 5);
+          const { query, notebooks } = await this.getQueryRpc();
+          const sources = await notebooks.getSources(askNotebookId);
+          const titleById = new Map(sources.map((s) => [s.id, s.title]));
+          const res = await query.ask(askNotebookId, question, {
+            sourceIds: sources.map((s) => s.id),
+          });
+          let sourcesOut: SourceCitations | undefined;
+          if (source_format !== 'none') {
+            sourcesOut = {
+              format: source_format,
+              citations: res.references.map((r) => ({
+                marker: `[${r.citation_number}]`,
+                number: r.citation_number,
+                sourceText: r.cited_text || '',
+                sourceName: titleById.get(r.source_id) || undefined,
+              })),
+              extraction_success: true,
+            };
+          }
+          await sendProgress?.('Question answered successfully!', 5, 5);
+          log.success('✅ [TOOL] ask_question completed (RPC)');
+          return {
+            success: true,
+            data: {
+              status: 'success',
+              question,
+              answer: res.answer.trimEnd(),
+              session_id: res.conversationId || askNotebookId,
+              notebook_url: resolvedNotebookUrl!,
+              session_info: { age_seconds: 0, message_count: 1, last_activity: Date.now() },
+              sources: sourcesOut,
+            },
+          };
+        } catch (e) {
+          log.warning(
+            `  ⚠️ RPC ask failed (${e instanceof Error ? e.message : String(e)}); falling back to browser...`
+          );
         }
       }
 
@@ -2809,6 +2987,35 @@ export class ToolHandlers {
         };
       }
 
+      // RPC path (default) for URL / YouTube / text sources: the add RPC
+      // returns the new source id directly, so there is no post-upload polling
+      // or false-negative like the DOM flow. File / Google-Drive keep the
+      // browser flow (picker / resumable upload). Falls back on RPC failure.
+      const rpcNotebookId = this.notebookIdFromUrl(resolvedNotebookUrl);
+      const rpcAddable =
+        source_type === 'url' || source_type === 'youtube' || source_type === 'text';
+      if (this.useRpcTransport() && rpcAddable && rpcNotebookId) {
+        try {
+          const sources = await this.getSourcesRpc();
+          const src =
+            source_type === 'text'
+              ? await sources.addTextSource(rpcNotebookId, title || 'Pasted Text', text || '')
+              : await sources.addUrlSource(rpcNotebookId, url || '');
+          if (src?.id) {
+            log.success(`  ✅ (RPC) Source added: ${src.title} (${src.id})`);
+            return {
+              success: true,
+              data: { success: true, sourceId: src.id, sourceName: src.title, status: 'ready' },
+            };
+          }
+          log.warning('  ⚠️ RPC add_source returned no id; falling back to browser flow...');
+        } catch (e) {
+          log.warning(
+            `  ⚠️ RPC add_source failed (${e instanceof Error ? e.message : String(e)}); falling back to browser flow...`
+          );
+        }
+      }
+
       // Get or create session
       const session = await this.sessionManager.getOrCreateSession(
         session_id,
@@ -2893,6 +3100,26 @@ export class ToolHandlers {
           success: false,
           error: 'No notebook URL provided and no active notebook set',
         };
+      }
+
+      // RPC path (default) when the source is identified by a real UUID id:
+      // delete directly, no browser. Name-based deletes still resolve via the
+      // DOM (RPC source-listing lands in a later phase). Falls back on failure.
+      const delNotebookId = this.notebookIdFromUrl(resolvedNotebookUrl);
+      const isUuid =
+        !!source_id &&
+        /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/.test(source_id);
+      if (this.useRpcTransport() && delNotebookId && isUuid) {
+        try {
+          const sources = await this.getSourcesRpc();
+          await sources.deleteSource(delNotebookId, source_id!);
+          log.success(`  ✅ (RPC) Source deleted: ${source_id}`);
+          return { success: true, data: { success: true, sourceId: source_id } };
+        } catch (e) {
+          log.warning(
+            `  ⚠️ RPC delete_source failed (${e instanceof Error ? e.message : String(e)}); falling back to browser flow...`
+          );
+        }
       }
 
       // Get or create session
@@ -2989,6 +3216,53 @@ export class ToolHandlers {
         };
       }
 
+      // RPC path (default): generate via CREATE_STUDIO + poll — far faster than
+      // the browser Studio flow (report ~13s vs minutes) and no browser. Falls
+      // back to the browser flow on any RPC failure.
+      const RPC_STUDIO_TYPES = new Set<string>([
+        'audio_overview',
+        'video',
+        'infographic',
+        'presentation',
+        'report',
+        'data_table',
+      ]);
+      const genNotebookId = this.notebookIdFromUrl(resolvedNotebookUrl);
+      if (this.useRpcTransport() && genNotebookId && RPC_STUDIO_TYPES.has(content_type)) {
+        try {
+          const client = await this.getRpcClient();
+          const sourceIds = await new NotebookRpc(client).getSourceIds(genNotebookId);
+          if (sourceIds.length === 0) throw new Error('notebook has no sources to generate from');
+          const res = await new StudioRpc(client).generate(
+            genNotebookId,
+            content_type as StudioType,
+            sourceIds,
+            { language: language || CONFIG.uiLocale, focus: custom_instructions || '' }
+          );
+          const ok = res.status === 'completed';
+          log.success(`  ✅ (RPC) generate ${content_type}: ${res.status}`);
+          const mappedStatus = ok
+            ? 'ready'
+            : res.status === 'in_progress'
+              ? 'generating'
+              : 'failed';
+          return {
+            success: ok,
+            data: {
+              success: ok,
+              contentType: content_type,
+              status: mappedStatus,
+              textContent: res.textContent || res.title,
+            },
+            error: ok ? undefined : `Generation ${res.status}`,
+          };
+        } catch (e) {
+          log.warning(
+            `  ⚠️ RPC generate failed (${e instanceof Error ? e.message : String(e)}); falling back to browser flow...`
+          );
+        }
+      }
+
       // Get or create session
       const session = await this.sessionManager.getOrCreateSession(session_id, resolvedNotebookUrl);
       const page = session.getPage();
@@ -3059,6 +3333,55 @@ export class ToolHandlers {
         };
       }
 
+      // RPC path (default): sources + generated artifacts via the API, no
+      // browser. Falls back to the browser overview on failure.
+      const lcNotebookId = this.notebookIdFromUrl(resolvedNotebookUrl);
+      if (this.useRpcTransport() && lcNotebookId) {
+        try {
+          const client = await this.getRpcClient();
+          const srcs = await new NotebookRpc(client).getSources(lcNotebookId);
+          const artifacts = await new StudioRpc(client).poll(lcNotebookId);
+          const TYPE_NAME: Record<number, ContentType> = {
+            1: 'audio_overview',
+            2: 'report',
+            3: 'video',
+            7: 'infographic',
+            8: 'presentation',
+            9: 'data_table',
+          };
+          const generatedContent = artifacts
+            .filter((a) => a.status === 'completed' && TYPE_NAME[a.typeCode])
+            .map((a) => ({
+              id: a.id,
+              type: TYPE_NAME[a.typeCode],
+              name: a.title || String(TYPE_NAME[a.typeCode]),
+              status: 'ready' as const,
+              createdAt: new Date().toISOString(),
+              url: a.mediaUrl,
+              content: a.textContent,
+            }));
+          const overview: NotebookContentOverview = {
+            sources: srcs.map((s) => ({
+              id: s.id,
+              name: s.title,
+              type: 'document',
+              status: 'ready' as const,
+            })),
+            generatedContent,
+            sourceCount: srcs.length,
+            hasAudioOverview: artifacts.some((a) => a.typeCode === 1 && a.status === 'completed'),
+          };
+          log.success(
+            `  ✅ (RPC) list_content: ${srcs.length} sources, ${generatedContent.length} generated`
+          );
+          return { success: true, data: overview };
+        } catch (e) {
+          log.warning(
+            `  ⚠️ RPC list_content failed (${e instanceof Error ? e.message : String(e)}); falling back to browser...`
+          );
+        }
+      }
+
       // Get or create session
       const session = await this.sessionManager.getOrCreateSession(session_id, resolvedNotebookUrl);
       const page = session.getPage();
@@ -3115,6 +3438,45 @@ export class ToolHandlers {
           success: false,
           error: 'No notebook URL provided and no active notebook set',
         };
+      }
+
+      // RPC path (default) for media artifacts: poll for the artifact, fetch
+      // its media URL (following redirects manually so cookies survive the
+      // cross-origin hop to googleusercontent.com), and save — no browser.
+      // Text (report) / Sheets-Slides exports keep the browser flow. Falls back
+      // to the browser download on any RPC failure.
+      const dlNotebookId = this.notebookIdFromUrl(resolvedNotebookUrl);
+      const MEDIA_TYPE: Record<string, { code: number; ext: string }> = {
+        audio_overview: { code: 1, ext: 'm4a' },
+        video: { code: 3, ext: 'mp4' },
+        infographic: { code: 7, ext: 'png' },
+      };
+      if (this.useRpcTransport() && dlNotebookId && MEDIA_TYPE[content_type]) {
+        try {
+          const { code, ext } = MEDIA_TYPE[content_type];
+          const client = await this.getRpcClient();
+          const artifact = (await new StudioRpc(client).poll(dlNotebookId)).find(
+            (a) => a.typeCode === code && a.status === 'completed'
+          );
+          if (!artifact) throw new Error(`no completed ${content_type} artifact to download`);
+          if (!artifact.mediaUrl) throw new Error(`${content_type} artifact exposes no media URL`);
+          const { bytes, contentType } = await client.fetchBinary(artifact.mediaUrl);
+          if (bytes.slice(0, 60).toString('latin1').toLowerCase().includes('<!doctype html')) {
+            throw new Error('media URL returned HTML (auth/redirect), not the file');
+          }
+          const safeName = (artifact.title || content_type).replace(/[^\w.-]+/g, '_').slice(0, 80);
+          const savePath = output_path || path.join(CONFIG.dataDir, `${safeName}.${ext}`);
+          fs.writeFileSync(savePath, bytes);
+          log.success(`  ✅ (RPC) downloaded ${content_type}: ${savePath} (${bytes.length} bytes)`);
+          return {
+            success: true,
+            data: { success: true, filePath: savePath, mimeType: contentType, size: bytes.length },
+          };
+        } catch (e) {
+          log.warning(
+            `  ⚠️ RPC download failed (${e instanceof Error ? e.message : String(e)}); falling back to browser...`
+          );
+        }
       }
 
       // Get or create session
@@ -3484,6 +3846,232 @@ export class ToolHandlers {
    * This navigates to notebooklm.google.com and extracts notebook info from the page.
    */
   /**
+   * True unless `NOTEBOOKLM_TRANSPORT=dom` forces the legacy browser path.
+   * During the RPC migration, handlers try RPC first and fall back to the DOM
+   * implementation on failure; the DOM path is removed once RPC parity is
+   * confirmed in production.
+   */
+  private useRpcTransport(): boolean {
+    return (process.env.NOTEBOOKLM_TRANSPORT || 'rpc').toLowerCase() !== 'dom';
+  }
+
+  /**
+   * Build a batchexecute RPC client from the shared authenticated context's
+   * cookies. Reuses the existing browser session for auth (hybrid design);
+   * the RPC calls themselves use no browser.
+   */
+  private async getRpcClient(): Promise<BatchExecuteClient> {
+    const sharedContextManager = this.sessionManager.getSharedContextManager();
+    const context = await sharedContextManager.getOrCreateContext();
+    const raw = await context.cookies('https://notebooklm.google.com');
+    const cookies = raw.map((c) => ({ name: c.name, value: c.value }));
+    return new BatchExecuteClient({ cookies, hl: CONFIG.uiLocale });
+  }
+
+  private async getNotebookRpc(): Promise<NotebookRpc> {
+    return new NotebookRpc(await this.getRpcClient());
+  }
+
+  private async getSourcesRpc(): Promise<SourcesRpc> {
+    return new SourcesRpc(await this.getRpcClient());
+  }
+
+  private async getQueryRpc(): Promise<{ query: QueryRpc; notebooks: NotebookRpc }> {
+    const client = await this.getRpcClient();
+    const notebooks = new NotebookRpc(client);
+    return { query: new QueryRpc(client, notebooks), notebooks };
+  }
+
+  /**
+   * Notebook sharing (RPC-only extension): read status, or toggle the public
+   * link when `set_public` is provided. Returns the resulting share status.
+   */
+  async handleNotebookSharing(args: {
+    notebook_url?: string;
+    notebook_id?: string;
+    set_public?: boolean;
+  }): Promise<ToolResult<ShareStatus>> {
+    log.info(`🔧 [TOOL] notebook_sharing called`);
+    try {
+      const url =
+        args.notebook_url ||
+        (args.notebook_id
+          ? `https://${NOTEBOOK_PRIMARY_HOST}/notebook/${args.notebook_id}`
+          : this.library.getActiveNotebook()?.url);
+      const notebookId = url ? this.notebookIdFromUrl(url) : args.notebook_id || null;
+      if (!notebookId) {
+        return { success: false, error: 'No notebook specified (notebook_url or notebook_id)' };
+      }
+      const sharing = new SharingRpc(await this.getRpcClient());
+      if (typeof args.set_public === 'boolean') {
+        await sharing.setPublic(notebookId, args.set_public);
+        log.success(`  ✅ Sharing set: public=${args.set_public}`);
+      }
+      const status = await sharing.getStatus(notebookId);
+      return { success: true, data: status };
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error);
+      log.error(`❌ [TOOL] notebook_sharing failed: ${msg}`);
+      return { success: false, error: msg };
+    }
+  }
+
+  /**
+   * Generate a study aid (flashcards or quiz) — RPC-only extension (a Studio
+   * type the DOM tool never exposed). Create + poll until ready.
+   */
+  async handleGenerateStudyAid(args: {
+    notebook_url?: string;
+    notebook_id?: string;
+    kind: 'flashcards' | 'quiz';
+    focus?: string;
+  }): Promise<ToolResult<{ status: string; title?: string; artifactId?: string }>> {
+    log.info(`🔧 [TOOL] generate_study_aid (${args.kind}) called`);
+    try {
+      const url =
+        args.notebook_url ||
+        (args.notebook_id
+          ? `https://${NOTEBOOK_PRIMARY_HOST}/notebook/${args.notebook_id}`
+          : this.library.getActiveNotebook()?.url);
+      const notebookId = url ? this.notebookIdFromUrl(url) : args.notebook_id || null;
+      if (!notebookId) return { success: false, error: 'No notebook specified' };
+      if (args.kind !== 'flashcards' && args.kind !== 'quiz') {
+        return { success: false, error: `kind must be 'flashcards' or 'quiz'` };
+      }
+      const client = await this.getRpcClient();
+      const sourceIds = await new NotebookRpc(client).getSourceIds(notebookId);
+      if (!sourceIds.length) return { success: false, error: 'notebook has no sources' };
+      const res = await new StudioRpc(client).generate(notebookId, args.kind, sourceIds, {
+        language: CONFIG.uiLocale,
+        focus: args.focus || '',
+      });
+      const ok = res.status === 'completed';
+      log.success(`  ✅ (RPC) generate ${args.kind}: ${res.status}`);
+      return {
+        success: ok,
+        data: { status: res.status, title: res.title, artifactId: res.artifactId ?? undefined },
+        error: ok ? undefined : `Generation ${res.status}`,
+      };
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error);
+      log.error(`❌ [TOOL] generate_study_aid failed: ${msg}`);
+      return { success: false, error: msg };
+    }
+  }
+
+  /** Resolve a notebook UUID from url/id/active-notebook, or null. */
+  private resolveNotebookId(notebook_url?: string, notebook_id?: string): string | null {
+    const url =
+      notebook_url ||
+      (notebook_id ? `https://${NOTEBOOK_PRIMARY_HOST}/notebook/${notebook_id}` : undefined) ||
+      this.library.getActiveNotebook()?.url;
+    return url ? this.notebookIdFromUrl(url) : notebook_id || null;
+  }
+
+  /** Generate + save a mind map from a notebook's sources (RPC-only extension). */
+  async handleGenerateMindMap(args: {
+    notebook_url?: string;
+    notebook_id?: string;
+    title?: string;
+  }): Promise<ToolResult<MindMapResult>> {
+    log.info(`🔧 [TOOL] generate_mind_map called`);
+    try {
+      const notebookId = this.resolveNotebookId(args.notebook_url, args.notebook_id);
+      if (!notebookId) return { success: false, error: 'No notebook specified' };
+      const client = await this.getRpcClient();
+      const sourceIds = await new NotebookRpc(client).getSourceIds(notebookId);
+      if (!sourceIds.length) return { success: false, error: 'notebook has no sources' };
+      const res = await new MindMapRpc(client).generateAndSave(
+        notebookId,
+        sourceIds,
+        args.title || 'Mind Map'
+      );
+      log.success(`  ✅ (RPC) mind map saved: ${res.mindMapId}`);
+      return { success: true, data: res };
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error);
+      log.error(`❌ [TOOL] generate_mind_map failed: ${msg}`);
+      return { success: false, error: msg };
+    }
+  }
+
+  /** Manage source labels (RPC-only extension): list / create / delete. */
+  async handleLabels(args: {
+    notebook_url?: string;
+    notebook_id?: string;
+    action?: 'list' | 'create' | 'delete';
+    name?: string;
+    emoji?: string;
+    label_ids?: string[];
+  }): Promise<ToolResult<{ labels: Label[] }>> {
+    log.info(`🔧 [TOOL] labels (${args.action || 'list'}) called`);
+    try {
+      const notebookId = this.resolveNotebookId(args.notebook_url, args.notebook_id);
+      if (!notebookId) return { success: false, error: 'No notebook specified' };
+      const labels = new LabelsRpc(await this.getRpcClient());
+      const action = args.action || 'list';
+      if (action === 'create') {
+        if (!args.name) return { success: false, error: 'name required to create a label' };
+        return {
+          success: true,
+          data: { labels: await labels.create(notebookId, args.name, args.emoji || '') },
+        };
+      }
+      if (action === 'delete') {
+        if (!args.label_ids?.length)
+          return { success: false, error: 'label_ids required to delete' };
+        await labels.delete(notebookId, args.label_ids);
+      }
+      return { success: true, data: { labels: await labels.list(notebookId) } };
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error);
+      log.error(`❌ [TOOL] labels failed: ${msg}`);
+      return { success: false, error: msg };
+    }
+  }
+
+  /**
+   * Discover web sources for a notebook (RPC-only extension). Starts Fast
+   * Research, polls until results, and optionally imports the found sources.
+   */
+  async handleResearchSources(args: {
+    notebook_url?: string;
+    notebook_id?: string;
+    query: string;
+    import?: boolean;
+  }): Promise<
+    ToolResult<{ sources: DiscoveredSource[]; imported: number; taskId: string | null }>
+  > {
+    log.info(`🔧 [TOOL] research_sources called`);
+    try {
+      const notebookId = this.resolveNotebookId(args.notebook_url, args.notebook_id);
+      if (!notebookId) return { success: false, error: 'No notebook specified' };
+      if (!args.query) return { success: false, error: 'query is required' };
+      const res = await new ResearchRpc(await this.getRpcClient()).discover(
+        notebookId,
+        args.query,
+        {
+          import: args.import === true,
+        }
+      );
+      log.success(`  ✅ (RPC) research: ${res.sources.length} found, ${res.imported} imported`);
+      return {
+        success: true,
+        data: { sources: res.sources, imported: res.imported, taskId: res.taskId },
+      };
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error);
+      log.error(`❌ [TOOL] research_sources failed: ${msg}`);
+      return { success: false, error: msg };
+    }
+  }
+
+  /** Extract a notebook UUID from a NotebookLM URL, or null. */
+  private notebookIdFromUrl(url: string): string | null {
+    return url.match(/notebook\/([a-f0-9-]{36})/)?.[1] ?? null;
+  }
+
+  /**
    * Force the NotebookLM homepage into GRID view.
    *
    * After the "Gemini Notebook" rebrand the notebook tiles only expose their
@@ -3545,6 +4133,29 @@ export class ToolHandlers {
 
     await sendProgress?.('Scraping notebooks from NotebookLM...', 0, 5);
     log.info(`🔧 [TOOL] list_notebooks_from_nblm called`);
+
+    // RPC path (default): list via the internal API — faster, and returns all
+    // owned notebooks regardless of the homepage's view/filter state (the DOM
+    // scrape misses filtered ones). Falls back to the DOM scrape on failure.
+    if (this.useRpcTransport()) {
+      try {
+        const rpc = await this.getNotebookRpc();
+        const notebooks = await rpc.listNotebooks();
+        log.success(`  ✅ (RPC) Found ${notebooks.length} notebooks`);
+        return {
+          success: true,
+          data: {
+            notebooks,
+            total: notebooks.length,
+            message: `Found ${notebooks.length} notebooks in NotebookLM account`,
+          },
+        };
+      } catch (e) {
+        log.warning(
+          `  ⚠️ RPC list failed (${e instanceof Error ? e.message : String(e)}); falling back to DOM scrape...`
+        );
+      }
+    }
 
     try {
       // Apply show_browser option
@@ -3764,6 +4375,46 @@ export class ToolHandlers {
 
     const deleted: string[] = [];
     const failed: string[] = [];
+
+    // RPC path (default): delete each by id (instant, no homepage reorder race
+    // that the DOM path suffered), then verify against a fresh list — a
+    // still-present id is reported failed, never falsely deleted. Falls back to
+    // the browser flow on RPC failure.
+    if (this.useRpcTransport()) {
+      try {
+        const rpc = await this.getNotebookRpc();
+        for (let i = 0; i < notebook_ids.length; i++) {
+          await sendProgress?.(
+            `Deleting notebook ${i + 1}/${notebook_ids.length}...`,
+            i,
+            notebook_ids.length
+          );
+          await rpc.deleteNotebook(notebook_ids[i]).catch((e) => {
+            log.warning(`  ⚠️ RPC delete ${notebook_ids[i].substring(0, 8)}... threw: ${e}`);
+          });
+        }
+        const remaining = new Set((await rpc.listNotebooks()).map((n) => n.id));
+        for (const id of notebook_ids) {
+          if (remaining.has(id)) failed.push(id);
+          else deleted.push(id);
+        }
+        log.success(
+          `  ✅ (RPC) Deletion complete: ${deleted.length} deleted, ${failed.length} failed`
+        );
+        return {
+          success: true,
+          data: {
+            deleted,
+            failed,
+            message: `Deleted ${deleted.length} notebooks, ${failed.length} failed`,
+          },
+        };
+      } catch (e) {
+        log.warning(
+          `  ⚠️ RPC delete failed (${e instanceof Error ? e.message : String(e)}); falling back to browser flow...`
+        );
+      }
+    }
 
     try {
       // Apply show_browser option
@@ -3993,6 +4644,30 @@ export class ToolHandlers {
 
     await sendProgress?.('Creating new notebook...', 0, 5);
     log.info(`🔧 [TOOL] create_notebook called`);
+
+    // RPC path (default): create via the internal API, which sets the title at
+    // creation (no separate rename needed). Falls back to the browser flow.
+    if (this.useRpcTransport()) {
+      try {
+        const rpc = await this.getNotebookRpc();
+        const nb = await rpc.createNotebook(name || '');
+        log.success(`  ✅ (RPC) Created notebook ${nb.id}${name ? ` "${name}"` : ''}`);
+        return {
+          success: true,
+          data: {
+            notebook_url: nb.url,
+            notebook_id: nb.id,
+            name_applied: true, // RPC sets the title atomically at creation
+            actual_name: name ? nb.name : '',
+            message: `Successfully created new notebook${name ? ` "${name}"` : ''}`,
+          },
+        };
+      } catch (e) {
+        log.warning(
+          `  ⚠️ RPC create failed (${e instanceof Error ? e.message : String(e)}); falling back to browser flow...`
+        );
+      }
+    }
 
     try {
       // Apply show_browser option

@@ -7,6 +7,52 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [3.0.0] - 2026-07-30
+
+### Changed — major refactor: dual transport (internal RPC API + DOM fallback)
+
+The data plane no longer scrapes the browser DOM for every operation. It now
+drives NotebookLM's **internal `batchexecute` RPC API** — the same JSON-RPC
+endpoint the web app itself calls — with the Playwright browser retained as an
+**automatic fallback** and for login / auto-reauth. Both paths ship
+**permanently**: the client tries RPC first and falls back to DOM automation if
+an internal endpoint shifts, so a future UI rebrand degrades gracefully instead
+of breaking.
+
+- **Immune to UI rebrands** — the operations that broke in the "Gemini Notebook"
+  rebrand (list / create / delete / sources / ask / Studio) run over stable
+  internal ids, independent of the DOM.
+- **10-100× faster** — list notebooks ~1 s (was ~30 s), generate a report ~13 s
+  and a data table ~18 s (was minutes). Adding a URL source returns the source
+  id directly instead of polling up to 60 s.
+- **More correct** — `list_notebooks` returns every notebook (the DOM path
+  missed notebooks hidden by homepage filter/view state); `ask` returns
+  **structured citations** (source id + citation number + cited passage) parsed
+  from the streaming query response rather than reconstructed from DOM
+  highlights.
+- **Force the transport** with `NOTEBOOKLM_TRANSPORT=dom` (global DOM) or hot-patch
+  a rotated RPC id via `NOTEBOOKLM_RPC_OVERRIDES` (JSON map) without a release.
+- **Download** tries the RPC binary fetch, detects the HTML viewer page Google
+  serves for Studio media, and falls back to the DOM downloader automatically.
+
+### Added — 5 new tools (RPC only)
+
+- **`share_notebook`** — read/set a notebook's public-link status and list
+  collaborators.
+- **`generate_study_aid`** — generate flashcards or a quiz from the sources.
+- **`generate_mind_map`** — generate and save an interactive mind map.
+- **`manage_labels`** — list / create / rename / delete source labels.
+- **`research_sources`** — run NotebookLM's web research (fast or deep) to
+  discover and optionally import new sources.
+
+All five are exposed over MCP, the HTTP REST API, and `src/index.ts` dispatch.
+
+### Notes
+
+- No breaking changes to existing tool names or the REST surface; the RPC
+  migration is transparent. The major bump reflects the architectural change and
+  the new permanent dual-transport contract.
+
 ## [2.3.0] - 2026-07-30
 
 ### Fixed — the "Gemini Notebook" rebrand rebuilt the whole UI; create / list / rename / delete / sources / Studio all repaired (#23, #21)

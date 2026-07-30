@@ -644,6 +644,53 @@ class NotebookLMMCPServer {
             );
             break;
 
+          case 'share_notebook':
+            result = await this.toolHandlers.handleNotebookSharing(
+              args as { notebook_url?: string; notebook_id?: string; set_public?: boolean }
+            );
+            break;
+
+          case 'generate_study_aid':
+            result = await this.toolHandlers.handleGenerateStudyAid(
+              args as {
+                notebook_url?: string;
+                notebook_id?: string;
+                kind: 'flashcards' | 'quiz';
+                focus?: string;
+              }
+            );
+            break;
+
+          case 'generate_mind_map':
+            result = await this.toolHandlers.handleGenerateMindMap(
+              args as { notebook_url?: string; notebook_id?: string; title?: string }
+            );
+            break;
+
+          case 'manage_labels':
+            result = await this.toolHandlers.handleLabels(
+              args as {
+                notebook_url?: string;
+                notebook_id?: string;
+                action?: 'list' | 'create' | 'delete';
+                name?: string;
+                emoji?: string;
+                label_ids?: string[];
+              }
+            );
+            break;
+
+          case 'research_sources':
+            result = await this.toolHandlers.handleResearchSources(
+              args as {
+                notebook_url?: string;
+                notebook_id?: string;
+                query: string;
+                import?: boolean;
+              }
+            );
+            break;
+
           default:
             log.error(`❌ [MCP] Unknown tool: ${name}`);
             return {
