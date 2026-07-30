@@ -16,6 +16,7 @@
  */
 
 import fs from 'fs';
+import path from 'path';
 import { LEGACY_TO_CANONICAL } from './tool-names.js';
 import { SessionManager } from '../session/session-manager.js';
 import { AuthManager } from '../auth/auth-manager.js';
@@ -3318,11 +3319,44 @@ export class ToolHandlers {
         };
       }
 
-      // NOTE: download stays on the browser flow. The Studio media URLs are on
-      // googleusercontent.com and 302 cross-origin, where Node's fetch drops the
-      // Cookie header → an unauthenticated HTML page instead of the bytes. A
-      // correct RPC download needs a cookie-jar / manual redirect handling or
-      // the CDP transport; deferred (the browser download already works).
+      // RPC path (default) for media artifacts: poll for the artifact, fetch
+      // its media URL (following redirects manually so cookies survive the
+      // cross-origin hop to googleusercontent.com), and save — no browser.
+      // Text (report) / Sheets-Slides exports keep the browser flow. Falls back
+      // to the browser download on any RPC failure.
+      const dlNotebookId = this.notebookIdFromUrl(resolvedNotebookUrl);
+      const MEDIA_TYPE: Record<string, { code: number; ext: string }> = {
+        audio_overview: { code: 1, ext: 'm4a' },
+        video: { code: 3, ext: 'mp4' },
+        infographic: { code: 7, ext: 'png' },
+      };
+      if (this.useRpcTransport() && dlNotebookId && MEDIA_TYPE[content_type]) {
+        try {
+          const { code, ext } = MEDIA_TYPE[content_type];
+          const client = await this.getRpcClient();
+          const artifact = (await new StudioRpc(client).poll(dlNotebookId)).find(
+            (a) => a.typeCode === code && a.status === 'completed'
+          );
+          if (!artifact) throw new Error(`no completed ${content_type} artifact to download`);
+          if (!artifact.mediaUrl) throw new Error(`${content_type} artifact exposes no media URL`);
+          const { bytes, contentType } = await client.fetchBinary(artifact.mediaUrl);
+          if (bytes.slice(0, 60).toString('latin1').toLowerCase().includes('<!doctype html')) {
+            throw new Error('media URL returned HTML (auth/redirect), not the file');
+          }
+          const safeName = (artifact.title || content_type).replace(/[^\w.-]+/g, '_').slice(0, 80);
+          const savePath = output_path || path.join(CONFIG.dataDir, `${safeName}.${ext}`);
+          fs.writeFileSync(savePath, bytes);
+          log.success(`  ✅ (RPC) downloaded ${content_type}: ${savePath} (${bytes.length} bytes)`);
+          return {
+            success: true,
+            data: { success: true, filePath: savePath, mimeType: contentType, size: bytes.length },
+          };
+        } catch (e) {
+          log.warning(
+            `  ⚠️ RPC download failed (${e instanceof Error ? e.message : String(e)}); falling back to browser...`
+          );
+        }
+      }
 
       // Get or create session
       const session = await this.sessionManager.getOrCreateSession(session_id, resolvedNotebookUrl);

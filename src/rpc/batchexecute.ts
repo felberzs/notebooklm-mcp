@@ -177,6 +177,39 @@ export class BatchExecuteClient {
   }
 
   /**
+   * Fetch a binary resource (e.g. a Studio media URL) using the account
+   * cookies, **following redirects manually** so the Cookie header survives
+   * cross-origin hops. Node's `fetch` drops Cookie on cross-origin redirects,
+   * and Studio media URLs 302 from google.com to googleusercontent.com — a
+   * plain `redirect:'follow'` then lands unauthenticated on an HTML consent
+   * page instead of the bytes. All hops here are Google-owned, so re-sending
+   * the cookies is safe.
+   */
+  async fetchBinary(
+    url: string,
+    timeoutMs = 180000
+  ): Promise<{ bytes: Buffer; contentType: string }> {
+    let current = url;
+    for (let hop = 0; hop < 6; hop++) {
+      const res = await fetch(current, {
+        headers: { 'User-Agent': USER_AGENT, Cookie: this.cookieHeader },
+        redirect: 'manual',
+        signal: AbortSignal.timeout(timeoutMs),
+      });
+      if (res.status >= 300 && res.status < 400) {
+        const loc = res.headers.get('location');
+        if (!loc) throw new Error(`redirect ${res.status} without Location`);
+        current = new URL(loc, current).toString();
+        continue;
+      }
+      if (!res.ok) throw new Error(`download HTTP ${res.status} for ${current.slice(0, 80)}`);
+      const bytes = Buffer.from(await res.arrayBuffer());
+      return { bytes, contentType: res.headers.get('content-type') || 'application/octet-stream' };
+    }
+    throw new Error('too many redirects fetching media URL');
+  }
+
+  /**
    * POST to the streaming query endpoint (`GenerateFreeFormStreamed`, distinct
    * from batchexecute) and return the raw response text for the caller to
    * parse. `innerParams` is the query params array; the wire wraps it as
