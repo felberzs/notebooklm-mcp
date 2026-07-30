@@ -50,6 +50,8 @@ import { RateLimitError } from '../errors.js';
 import { CleanupManager } from '../utils/cleanup-manager.js';
 import { randomDelay } from '../utils/stealth-utils.js';
 import type { Page } from 'patchright';
+import { BatchExecuteClient } from '../rpc/batchexecute.js';
+import { NotebookRpc } from '../rpc/notebooks-rpc.js';
 import { ContentManager } from '../content/content-manager.js';
 import { runBatchToVault, type BatchToVaultResult } from '../utils/vault-writer.js';
 import type {
@@ -3484,6 +3486,30 @@ export class ToolHandlers {
    * This navigates to notebooklm.google.com and extracts notebook info from the page.
    */
   /**
+   * True unless `NOTEBOOKLM_TRANSPORT=dom` forces the legacy browser path.
+   * During the RPC migration, handlers try RPC first and fall back to the DOM
+   * implementation on failure; the DOM path is removed once RPC parity is
+   * confirmed in production.
+   */
+  private useRpcTransport(): boolean {
+    return (process.env.NOTEBOOKLM_TRANSPORT || 'rpc').toLowerCase() !== 'dom';
+  }
+
+  /**
+   * Build a notebook RPC client from the shared authenticated context's
+   * cookies. Reuses the existing browser session for auth (hybrid design);
+   * the RPC calls themselves use no browser.
+   */
+  private async getNotebookRpc(): Promise<NotebookRpc> {
+    const sharedContextManager = this.sessionManager.getSharedContextManager();
+    const context = await sharedContextManager.getOrCreateContext();
+    const raw = await context.cookies('https://notebooklm.google.com');
+    const cookies = raw.map((c) => ({ name: c.name, value: c.value }));
+    const client = new BatchExecuteClient({ cookies, hl: CONFIG.uiLocale });
+    return new NotebookRpc(client);
+  }
+
+  /**
    * Force the NotebookLM homepage into GRID view.
    *
    * After the "Gemini Notebook" rebrand the notebook tiles only expose their
@@ -3545,6 +3571,29 @@ export class ToolHandlers {
 
     await sendProgress?.('Scraping notebooks from NotebookLM...', 0, 5);
     log.info(`🔧 [TOOL] list_notebooks_from_nblm called`);
+
+    // RPC path (default): list via the internal API — faster, and returns all
+    // owned notebooks regardless of the homepage's view/filter state (the DOM
+    // scrape misses filtered ones). Falls back to the DOM scrape on failure.
+    if (this.useRpcTransport()) {
+      try {
+        const rpc = await this.getNotebookRpc();
+        const notebooks = await rpc.listNotebooks();
+        log.success(`  ✅ (RPC) Found ${notebooks.length} notebooks`);
+        return {
+          success: true,
+          data: {
+            notebooks,
+            total: notebooks.length,
+            message: `Found ${notebooks.length} notebooks in NotebookLM account`,
+          },
+        };
+      } catch (e) {
+        log.warning(
+          `  ⚠️ RPC list failed (${e instanceof Error ? e.message : String(e)}); falling back to DOM scrape...`
+        );
+      }
+    }
 
     try {
       // Apply show_browser option
@@ -3764,6 +3813,46 @@ export class ToolHandlers {
 
     const deleted: string[] = [];
     const failed: string[] = [];
+
+    // RPC path (default): delete each by id (instant, no homepage reorder race
+    // that the DOM path suffered), then verify against a fresh list — a
+    // still-present id is reported failed, never falsely deleted. Falls back to
+    // the browser flow on RPC failure.
+    if (this.useRpcTransport()) {
+      try {
+        const rpc = await this.getNotebookRpc();
+        for (let i = 0; i < notebook_ids.length; i++) {
+          await sendProgress?.(
+            `Deleting notebook ${i + 1}/${notebook_ids.length}...`,
+            i,
+            notebook_ids.length
+          );
+          await rpc.deleteNotebook(notebook_ids[i]).catch((e) => {
+            log.warning(`  ⚠️ RPC delete ${notebook_ids[i].substring(0, 8)}... threw: ${e}`);
+          });
+        }
+        const remaining = new Set((await rpc.listNotebooks()).map((n) => n.id));
+        for (const id of notebook_ids) {
+          if (remaining.has(id)) failed.push(id);
+          else deleted.push(id);
+        }
+        log.success(
+          `  ✅ (RPC) Deletion complete: ${deleted.length} deleted, ${failed.length} failed`
+        );
+        return {
+          success: true,
+          data: {
+            deleted,
+            failed,
+            message: `Deleted ${deleted.length} notebooks, ${failed.length} failed`,
+          },
+        };
+      } catch (e) {
+        log.warning(
+          `  ⚠️ RPC delete failed (${e instanceof Error ? e.message : String(e)}); falling back to browser flow...`
+        );
+      }
+    }
 
     try {
       // Apply show_browser option
@@ -3993,6 +4082,30 @@ export class ToolHandlers {
 
     await sendProgress?.('Creating new notebook...', 0, 5);
     log.info(`🔧 [TOOL] create_notebook called`);
+
+    // RPC path (default): create via the internal API, which sets the title at
+    // creation (no separate rename needed). Falls back to the browser flow.
+    if (this.useRpcTransport()) {
+      try {
+        const rpc = await this.getNotebookRpc();
+        const nb = await rpc.createNotebook(name || '');
+        log.success(`  ✅ (RPC) Created notebook ${nb.id}${name ? ` "${name}"` : ''}`);
+        return {
+          success: true,
+          data: {
+            notebook_url: nb.url,
+            notebook_id: nb.id,
+            name_applied: true, // RPC sets the title atomically at creation
+            actual_name: name ? nb.name : '',
+            message: `Successfully created new notebook${name ? ` "${name}"` : ''}`,
+          },
+        };
+      } catch (e) {
+        log.warning(
+          `  ⚠️ RPC create failed (${e instanceof Error ? e.message : String(e)}); falling back to browser flow...`
+        );
+      }
+    }
 
     try {
       // Apply show_browser option
