@@ -49,6 +49,7 @@ import type {
 import { RateLimitError } from '../errors.js';
 import { CleanupManager } from '../utils/cleanup-manager.js';
 import { randomDelay } from '../utils/stealth-utils.js';
+import type { Page } from 'patchright';
 import { ContentManager } from '../content/content-manager.js';
 import { runBatchToVault, type BatchToVaultResult } from '../utils/vault-writer.js';
 import type {
@@ -3482,6 +3483,48 @@ export class ToolHandlers {
    * Scrapes the NotebookLM homepage to get a real list of all notebooks.
    * This navigates to notebooklm.google.com and extracts notebook info from the page.
    */
+  /**
+   * Force the NotebookLM homepage into GRID view.
+   *
+   * After the "Gemini Notebook" rebrand the notebook tiles only expose their
+   * `project-{UUID}` ids and `/notebook/<id>` hrefs in GRID view; a LIST-view
+   * account renders a <project-table> with neither, breaking every id-based
+   * homepage operation (list scrape, delete-by-id — issue #23 / #21). Call this
+   * right after navigating to the homepage. Best-effort: no-ops if already in
+   * grid view or the toggle can't be found; the caller keeps its own fallback.
+   */
+  private async ensureHomepageGridView(page: Page): Promise<void> {
+    try {
+      // Let the homepage shell hydrate first — the view-toggle group and tiles
+      // render a beat after `domcontentloaded`, so checking immediately would
+      // miss the toggle and silently skip the switch.
+      await page
+        .waitForSelector(
+          'mat-button-toggle-group, button:has(mat-icon:has-text("grid_view")), [id^="project-"][id$="-title"]',
+          { timeout: 15000 }
+        )
+        .catch(() => undefined);
+      const inGrid = await page
+        .locator('[id^="project-"][id$="-title"]')
+        .first()
+        .isVisible({ timeout: 1000 })
+        .catch(() => false);
+      if (inGrid) return;
+      const gridToggle = page
+        .locator(
+          'button:has(mat-icon:has-text("grid_view")), mat-button-toggle:has(mat-icon:has-text("grid_view"))'
+        )
+        .first();
+      if (await gridToggle.isVisible({ timeout: 5000 }).catch(() => false)) {
+        log.info('  🔁 Switching homepage to grid view (ids/hrefs only render in grid)...');
+        await gridToggle.click().catch(() => undefined);
+        await randomDelay(1500, 2500);
+      }
+    } catch {
+      // Best-effort: callers fall back to their own 0/not-found handling.
+    }
+  }
+
   async handleListNotebooksFromNblm(
     args: {
       show_browser?: boolean;
@@ -3525,42 +3568,10 @@ export class ToolHandlers {
           timeout: 60000,
         });
 
-        // Force GRID view. The id/href scrape (Strategies 1-2) only works in
-        // grid view: after the "Gemini Notebook" rebrand, an account whose
-        // homepage is in LIST view renders a <project-table> with NO
-        // project-{UUID} ids and NO /notebook/<id> hrefs (issue #23 / #21),
-        // so both strategies return 0. Switching to grid first also avoids the
-        // 30s wait below timing out on a populated list-view account.
-        try {
-          // Let the homepage shell hydrate first — the view-toggle group and
-          // notebook cards render a beat after `domcontentloaded`, so checking
-          // immediately would miss the toggle and silently skip the switch.
-          await page
-            .waitForSelector(
-              'mat-button-toggle-group, button:has(mat-icon:has-text("grid_view")), [id^="project-"][id$="-title"]',
-              { timeout: 15000 }
-            )
-            .catch(() => undefined);
-          const inGrid = await page
-            .locator('[id^="project-"][id$="-title"]')
-            .first()
-            .isVisible({ timeout: 1000 })
-            .catch(() => false);
-          if (!inGrid) {
-            const gridToggle = page
-              .locator(
-                'button:has(mat-icon:has-text("grid_view")), mat-button-toggle:has(mat-icon:has-text("grid_view"))'
-              )
-              .first();
-            if (await gridToggle.isVisible({ timeout: 5000 }).catch(() => false)) {
-              log.info('  🔁 Switching homepage to grid view (ids/hrefs only render in grid)...');
-              await gridToggle.click().catch(() => undefined);
-              await randomDelay(1500, 2500);
-            }
-          }
-        } catch {
-          // Best-effort: if grid can't be forced, Strategy 1 will report 0.
-        }
+        // Force GRID view: the id/href scrape (Strategies 1-2) only works in
+        // grid view (issue #23 / #21). Also avoids the 30s wait below timing
+        // out on a populated list-view account.
+        await this.ensureHomepageGridView(page);
 
         // Wait for the page to fully render and show notebook cards
         // The homepage shows a grid of notebook cards with links
@@ -3784,6 +3795,12 @@ export class ToolHandlers {
               timeout: 30000,
             });
 
+            // Force GRID view: the `project-{UUID}-title` tiles this delete
+            // relies on only render in grid view — a list-view account would
+            // fail every delete with "tile not found" (same root cause as the
+            // list scrape, issue #23 / #21).
+            await this.ensureHomepageGridView(page);
+
             // Wait for the homepage to render at least one notebook tile.
             // The previous selector `button[aria-labelledby*="project-"]` no
             // longer matches the current NotebookLM DOM (same root cause as
@@ -3798,34 +3815,32 @@ export class ToolHandlers {
               });
             await randomDelay(1000, 2000);
 
-            // Resolve the menu button for this notebook by walking up from
-            // its title element to the nearest clickable card-like ancestor.
+            // Resolve THIS notebook's tile by walking up from its title
+            // element to the enclosing tile, then mark it so we can scope the
+            // menu-button lookup to that one tile.
             //
-            // Doing the walk inside `page.evaluate()` is much more robust
-            // than chained Playwright locators because we can inspect the
-            // structure freely and pick the right ancestor regardless of
-            // whether NotebookLM wraps tiles in <button>, <a>, <div>, etc.
+            // Climb to the `project-button` custom element (or its
+            // `.project-button-card`). The old walk stopped at the first
+            // role="link"/<a>/<button> ancestor — but in the rebranded grid the
+            // tile's primary-action <a> is a SIBLING of the title, not an
+            // ancestor, so the walk overshot to a shared container and the
+            // menu-button `.first()` below picked a DIFFERENT notebook. That
+            // deleted the wrong notebook and mis-reported it (data-loss risk).
             const titleId = `project-${notebookId}-title`;
             const cardFound = await page.evaluate(`
               (() => {
                 const titleEl = document.getElementById(${JSON.stringify(titleId)});
                 if (!titleEl) return false;
-                // Walk up to the card-like ancestor that contains both the
-                // title and the menu button. NotebookLM tiles are bounded
-                // by [role="link"] / a / button. We climb at most 6 levels.
                 let node = titleEl;
-                for (let i = 0; i < 6 && node; i++) {
-                  if (node.getAttribute && (
-                    node.getAttribute('role') === 'link' ||
-                    node.tagName === 'A' ||
-                    (node.tagName === 'BUTTON' && node !== titleEl)
-                  )) break;
+                for (let i = 0; i < 10 && node; i++) {
+                  const tag = node.tagName ? node.tagName.toLowerCase() : '';
+                  if (tag === 'project-button' || (node.classList && node.classList.contains('project-button-card'))) {
+                    node.setAttribute('data-nblm-target-card', '1');
+                    return true;
+                  }
                   node = node.parentElement;
                 }
-                if (!node) return false;
-                // Mark the card so we can target it from outside.
-                node.setAttribute('data-nblm-target-card', '1');
-                return true;
+                return false;
               })()
             `);
 
@@ -3841,7 +3856,7 @@ export class ToolHandlers {
             const cardContainer = page.locator('[data-nblm-target-card="1"]');
             const menuButton = cardContainer
               .locator(
-                'button[aria-label*="menu" i], button[aria-label*="options" i], button[aria-label*="more" i], button[aria-label*="plus" i], button:has(mat-icon)'
+                'button.project-button-more, button[aria-label*="actions du projet" i], button[aria-label*="project actions" i], button[aria-label*="menu" i], button:has(mat-icon)'
               )
               .first();
 
@@ -3858,41 +3873,66 @@ export class ToolHandlers {
               continue;
             }
             await menuButton.click();
-
             await randomDelay(500, 1000);
 
-            // Click delete option in the menu
-            const deleteButton = page
+            // Click the "Delete" item in the open action menu, scoped to the
+            // menuitem role so it can't accidentally match a dialog button.
+            const deleteMenuItem = page
               .locator(
-                'button:has-text("Supprimer"), button:has-text("Delete"), [role="menuitem"]:has-text("Supprimer"), [role="menuitem"]:has-text("Delete")'
+                '[role="menuitem"]:has-text("Supprimer"), [role="menuitem"]:has-text("Delete"), .mat-mdc-menu-item:has-text("Supprimer"), .mat-mdc-menu-item:has-text("Delete")'
               )
               .first();
-
-            if ((await deleteButton.count()) === 0) {
-              log.warning(`    ⚠️ Delete button not found for: ${notebookId}`);
-              // Close menu by pressing Escape
-              await page.keyboard.press('Escape');
+            if (!(await deleteMenuItem.isVisible({ timeout: 2000 }).catch(() => false))) {
+              log.warning(`    ⚠️ Delete menu item not found for: ${notebookId}`);
+              await page.keyboard.press('Escape').catch(() => undefined);
               failed.push(notebookId);
               continue;
             }
-
-            await deleteButton.click();
+            await deleteMenuItem.click();
             await randomDelay(500, 1000);
 
-            // Confirm deletion if a dialog appears
+            // Confirm in the dialog ("Supprimer le notebook partout ?"). Scope
+            // to the dialog so we never re-hit the menu item; the destructive
+            // button is labelled "Delete" even in non-English UIs (the other
+            // button is "Annuler"/"Cancel").
             const confirmButton = page
+              .locator('mat-dialog-container, [role="dialog"], .cdk-dialog-container')
+              .first()
               .locator(
-                'button:has-text("Supprimer"), button:has-text("Delete"), button:has-text("Confirmer"), button:has-text("Confirm")'
+                'button:has-text("Delete"), button:has-text("Supprimer"), button:has-text("Confirmer"), button:has-text("Confirm")'
               )
               .first();
-            if ((await confirmButton.count()) > 0) {
-              await confirmButton.click();
+            if (await confirmButton.isVisible({ timeout: 3000 }).catch(() => false)) {
+              await confirmButton.click().catch(() => undefined);
             }
+            await randomDelay(1500, 2500);
 
-            await randomDelay(1000, 2000);
-
-            deleted.push(notebookId);
-            log.success(`    ✅ Deleted: ${notebookId.substring(0, 8)}...`);
+            // VERIFY the tile is actually gone before reporting success. A
+            // mis-targeted click must never be recorded as a successful delete
+            // (data-loss safety) — re-load the homepage and confirm the id is
+            // absent.
+            await page.goto(withUiLocale(NOTEBOOK_BASE_URL, CONFIG.uiLocale), {
+              waitUntil: 'domcontentloaded',
+              timeout: 30000,
+            });
+            await this.ensureHomepageGridView(page);
+            await page
+              .waitForSelector('[id^="project-"][id$="-title"]', { timeout: 8000 })
+              .catch(() => undefined);
+            const stillPresent = await page
+              .locator(`[id="project-${notebookId}-title"]`)
+              .first()
+              .isVisible({ timeout: 1000 })
+              .catch(() => false);
+            if (stillPresent) {
+              log.warning(
+                `    ⚠️ Delete not confirmed — ${notebookId.substring(0, 8)}... still present after confirm`
+              );
+              failed.push(notebookId);
+            } else {
+              deleted.push(notebookId);
+              log.success(`    ✅ Deleted (verified gone): ${notebookId.substring(0, 8)}...`);
+            }
           } catch (e) {
             const errMsg = e instanceof Error ? e.message : String(e);
             log.warning(`    ⚠️ Failed to delete ${notebookId}: ${errMsg}`);
