@@ -642,6 +642,33 @@ app.put('/notebooks/:id/activate', async (req: Request, res: Response) => {
   }
 });
 
+// Get notebook sharing status (RPC extension)
+app.get('/notebooks/:id/share', async (req: Request, res: Response) => {
+  try {
+    res.json(await toolHandlers.handleNotebookSharing({ notebook_id: req.params.id }));
+  } catch (error) {
+    res
+      .status(500)
+      .json({ success: false, error: error instanceof Error ? error.message : String(error) });
+  }
+});
+
+// Toggle the public link (RPC extension). Body: { public: boolean }
+app.put('/notebooks/:id/share', async (req: Request, res: Response) => {
+  try {
+    res.json(
+      await toolHandlers.handleNotebookSharing({
+        notebook_id: req.params.id,
+        set_public: req.body?.public === true,
+      })
+    );
+  } catch (error) {
+    res
+      .status(500)
+      .json({ success: false, error: error instanceof Error ? error.message : String(error) });
+  }
+});
+
 // List sessions
 app.get('/sessions', async (_req: Request, res: Response) => {
   try {

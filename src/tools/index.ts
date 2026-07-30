@@ -56,6 +56,7 @@ import { NotebookRpc } from '../rpc/notebooks-rpc.js';
 import { SourcesRpc } from '../rpc/sources-rpc.js';
 import { QueryRpc } from '../rpc/query-rpc.js';
 import { StudioRpc, type StudioType } from '../rpc/studio-rpc.js';
+import { SharingRpc, type ShareStatus } from '../rpc/sharing-rpc.js';
 import { ContentManager } from '../content/content-manager.js';
 import { runBatchToVault, type BatchToVaultResult } from '../utils/vault-writer.js';
 import type {
@@ -1533,6 +1534,28 @@ User: "Yes" → call remove_notebook`,
           },
         },
         required: ['note_title'],
+      },
+    },
+    {
+      name: 'share_notebook',
+      description:
+        'Read a notebook’s sharing status, or toggle its public link. ' +
+        'Omit `set_public` to just read status (public link on/off, owner/collaborators). ' +
+        'Set `set_public: true`/`false` to enable/disable the public link. RPC-backed (no browser).',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          notebook_url: { type: 'string', description: 'NotebookLM notebook URL.' },
+          notebook_id: {
+            type: 'string',
+            description: 'Notebook UUID (alternative to notebook_url).',
+          },
+          set_public: {
+            type: 'boolean',
+            description:
+              'Optional. true = enable public link, false = restrict. Omit to only read status.',
+          },
+        },
       },
     },
   ];
@@ -3759,6 +3782,40 @@ export class ToolHandlers {
     const client = await this.getRpcClient();
     const notebooks = new NotebookRpc(client);
     return { query: new QueryRpc(client, notebooks), notebooks };
+  }
+
+  /**
+   * Notebook sharing (RPC-only extension): read status, or toggle the public
+   * link when `set_public` is provided. Returns the resulting share status.
+   */
+  async handleNotebookSharing(args: {
+    notebook_url?: string;
+    notebook_id?: string;
+    set_public?: boolean;
+  }): Promise<ToolResult<ShareStatus>> {
+    log.info(`🔧 [TOOL] notebook_sharing called`);
+    try {
+      const url =
+        args.notebook_url ||
+        (args.notebook_id
+          ? `https://${NOTEBOOK_PRIMARY_HOST}/notebook/${args.notebook_id}`
+          : this.library.getActiveNotebook()?.url);
+      const notebookId = url ? this.notebookIdFromUrl(url) : args.notebook_id || null;
+      if (!notebookId) {
+        return { success: false, error: 'No notebook specified (notebook_url or notebook_id)' };
+      }
+      const sharing = new SharingRpc(await this.getRpcClient());
+      if (typeof args.set_public === 'boolean') {
+        await sharing.setPublic(notebookId, args.set_public);
+        log.success(`  ✅ Sharing set: public=${args.set_public}`);
+      }
+      const status = await sharing.getStatus(notebookId);
+      return { success: true, data: status };
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error);
+      log.error(`❌ [TOOL] notebook_sharing failed: ${msg}`);
+      return { success: false, error: msg };
+    }
   }
 
   /** Extract a notebook UUID from a NotebookLM URL, or null. */

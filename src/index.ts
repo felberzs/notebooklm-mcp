@@ -644,6 +644,12 @@ class NotebookLMMCPServer {
             );
             break;
 
+          case 'share_notebook':
+            result = await this.toolHandlers.handleNotebookSharing(
+              args as { notebook_url?: string; notebook_id?: string; set_public?: boolean }
+            );
+            break;
+
           default:
             log.error(`❌ [MCP] Unknown tool: ${name}`);
             return {
