@@ -4000,12 +4000,36 @@ export class ToolHandlers {
         await sendProgress?.('Navigating to NotebookLM...', 1, 5);
         log.info('  📄 Navigating to NotebookLM homepage...');
 
-        // Navigate to NotebookLM homepage
+        // Navigate to NotebookLM homepage.
+        //
+        // Use `domcontentloaded`, NOT `networkidle`: after the "Gemini
+        // Notebook" rebrand the SPA polls the network continuously, so
+        // `networkidle` never fires and this goto hard-times-out at 30s
+        // (issue #23). The Create-button lookup below has its own visibility
+        // waits, so we don't need the page fully idle here.
         await page.goto(withUiLocale(NOTEBOOK_BASE_URL, CONFIG.uiLocale), {
-          waitUntil: 'networkidle',
+          waitUntil: 'domcontentloaded',
           timeout: 30000,
         });
         await randomDelay(1500, 2500);
+
+        // Dismiss the first-run "NotebookLM is now Gemini Notebook … Let's go"
+        // onboarding overlay if present — after the rebrand it can cover the
+        // Create button (issue #23). Best-effort: never throws, never blocks.
+        try {
+          const onboardingDismiss = page
+            .getByRole('button', {
+              name: /let's go|c'est parti|got it|j'ai compris|continue|continuer/i,
+            })
+            .first();
+          if (await onboardingDismiss.isVisible({ timeout: 1500 }).catch(() => false)) {
+            await onboardingDismiss.click().catch(() => {});
+            log.info('  ✅ Dismissed "Gemini Notebook" onboarding overlay');
+            await randomDelay(500, 1000);
+          }
+        } catch {
+          // Onboarding dismissal is best-effort; ignore failures.
+        }
 
         await sendProgress?.('Clicking create button...', 2, 5);
         log.info('  🖱️  Looking for Create notebook button...');
@@ -4087,7 +4111,10 @@ export class ToolHandlers {
           /notebooklm\.google\.com\/notebook\/[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}(?:\b|\/|$)/;
         await page.waitForURL(NOTEBOOK_UUID_URL, { timeout: 30000 });
         // Then wait for the page to settle so the title field is editable.
-        await page.waitForLoadState('networkidle', { timeout: 15000 }).catch(() => {});
+        // `domcontentloaded` (not `networkidle`): the rebranded SPA never goes
+        // network-idle, so `networkidle` would always eat the full 15s before
+        // the .catch() lets us continue (issue #23).
+        await page.waitForLoadState('domcontentloaded', { timeout: 15000 }).catch(() => {});
         await randomDelay(1500, 2500);
 
         // Parse the final URL/UUID with the same strict pattern.
