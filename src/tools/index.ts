@@ -3211,6 +3211,55 @@ export class ToolHandlers {
         };
       }
 
+      // RPC path (default): sources + generated artifacts via the API, no
+      // browser. Falls back to the browser overview on failure.
+      const lcNotebookId = this.notebookIdFromUrl(resolvedNotebookUrl);
+      if (this.useRpcTransport() && lcNotebookId) {
+        try {
+          const client = await this.getRpcClient();
+          const srcs = await new NotebookRpc(client).getSources(lcNotebookId);
+          const artifacts = await new StudioRpc(client).poll(lcNotebookId);
+          const TYPE_NAME: Record<number, ContentType> = {
+            1: 'audio_overview',
+            2: 'report',
+            3: 'video',
+            7: 'infographic',
+            8: 'presentation',
+            9: 'data_table',
+          };
+          const generatedContent = artifacts
+            .filter((a) => a.status === 'completed' && TYPE_NAME[a.typeCode])
+            .map((a) => ({
+              id: a.id,
+              type: TYPE_NAME[a.typeCode],
+              name: a.title || String(TYPE_NAME[a.typeCode]),
+              status: 'ready' as const,
+              createdAt: new Date().toISOString(),
+              url: a.mediaUrl,
+              content: a.textContent,
+            }));
+          const overview: NotebookContentOverview = {
+            sources: srcs.map((s) => ({
+              id: s.id,
+              name: s.title,
+              type: 'document',
+              status: 'ready' as const,
+            })),
+            generatedContent,
+            sourceCount: srcs.length,
+            hasAudioOverview: artifacts.some((a) => a.typeCode === 1 && a.status === 'completed'),
+          };
+          log.success(
+            `  ✅ (RPC) list_content: ${srcs.length} sources, ${generatedContent.length} generated`
+          );
+          return { success: true, data: overview };
+        } catch (e) {
+          log.warning(
+            `  ⚠️ RPC list_content failed (${e instanceof Error ? e.message : String(e)}); falling back to browser...`
+          );
+        }
+      }
+
       // Get or create session
       const session = await this.sessionManager.getOrCreateSession(session_id, resolvedNotebookUrl);
       const page = session.getPage();
@@ -3268,6 +3317,12 @@ export class ToolHandlers {
           error: 'No notebook URL provided and no active notebook set',
         };
       }
+
+      // NOTE: download stays on the browser flow. The Studio media URLs are on
+      // googleusercontent.com and 302 cross-origin, where Node's fetch drops the
+      // Cookie header → an unauthenticated HTML page instead of the bytes. A
+      // correct RPC download needs a cookie-jar / manual redirect handling or
+      // the CDP transport; deferred (the browser download already works).
 
       // Get or create session
       const session = await this.sessionManager.getOrCreateSession(session_id, resolvedNotebookUrl);
