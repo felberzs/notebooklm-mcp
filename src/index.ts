@@ -661,6 +661,25 @@ class NotebookLMMCPServer {
             );
             break;
 
+          case 'generate_mind_map':
+            result = await this.toolHandlers.handleGenerateMindMap(
+              args as { notebook_url?: string; notebook_id?: string; title?: string }
+            );
+            break;
+
+          case 'manage_labels':
+            result = await this.toolHandlers.handleLabels(
+              args as {
+                notebook_url?: string;
+                notebook_id?: string;
+                action?: 'list' | 'create' | 'delete';
+                name?: string;
+                emoji?: string;
+                label_ids?: string[];
+              }
+            );
+            break;
+
           default:
             log.error(`❌ [MCP] Unknown tool: ${name}`);
             return {

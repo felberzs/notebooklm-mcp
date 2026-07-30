@@ -681,6 +681,47 @@ app.post('/content/study-aid', async (req: Request, res: Response) => {
   }
 });
 
+// Generate + save a mind map — RPC extension. Body: { notebook_url, title }
+app.post('/content/mind-map', async (req: Request, res: Response) => {
+  try {
+    const { notebook_url, notebook_id, title } = req.body || {};
+    res.json(await toolHandlers.handleGenerateMindMap({ notebook_url, notebook_id, title }));
+  } catch (error) {
+    res
+      .status(500)
+      .json({ success: false, error: error instanceof Error ? error.message : String(error) });
+  }
+});
+
+// Manage source labels — RPC extension. GET = list; POST = { action, name, emoji, label_ids }
+app.get('/notebooks/:id/labels', async (req: Request, res: Response) => {
+  try {
+    res.json(await toolHandlers.handleLabels({ notebook_id: req.params.id, action: 'list' }));
+  } catch (error) {
+    res
+      .status(500)
+      .json({ success: false, error: error instanceof Error ? error.message : String(error) });
+  }
+});
+app.post('/notebooks/:id/labels', async (req: Request, res: Response) => {
+  try {
+    const { action, name, emoji, label_ids } = req.body || {};
+    res.json(
+      await toolHandlers.handleLabels({
+        notebook_id: req.params.id,
+        action,
+        name,
+        emoji,
+        label_ids,
+      })
+    );
+  } catch (error) {
+    res
+      .status(500)
+      .json({ success: false, error: error instanceof Error ? error.message : String(error) });
+  }
+});
+
 // List sessions
 app.get('/sessions', async (_req: Request, res: Response) => {
   try {

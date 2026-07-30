@@ -57,6 +57,7 @@ import { SourcesRpc } from '../rpc/sources-rpc.js';
 import { QueryRpc } from '../rpc/query-rpc.js';
 import { StudioRpc, type StudioType } from '../rpc/studio-rpc.js';
 import { SharingRpc, type ShareStatus } from '../rpc/sharing-rpc.js';
+import { MindMapRpc, LabelsRpc, type MindMapResult, type Label } from '../rpc/extensions-rpc.js';
 import { ContentManager } from '../content/content-manager.js';
 import { runBatchToVault, type BatchToVaultResult } from '../utils/vault-writer.js';
 import type {
@@ -1579,6 +1580,51 @@ User: "Yes" → call remove_notebook`,
           focus: { type: 'string', description: 'Optional focus prompt to steer the content.' },
         },
         required: ['kind'],
+      },
+    },
+    {
+      name: 'generate_mind_map',
+      description:
+        'Generate and save a mind map from a notebook’s sources. RPC-backed (no browser). ' +
+        'Returns the saved mind-map id and its JSON structure.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          notebook_url: { type: 'string', description: 'NotebookLM notebook URL.' },
+          notebook_id: {
+            type: 'string',
+            description: 'Notebook UUID (alternative to notebook_url).',
+          },
+          title: { type: 'string', description: 'Optional title for the saved mind map.' },
+        },
+      },
+    },
+    {
+      name: 'manage_labels',
+      description:
+        'Manage a notebook’s source labels (RPC-backed): list them, create one, or delete some. ' +
+        'action=list (default) / create (needs name) / delete (needs label_ids).',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          notebook_url: { type: 'string', description: 'NotebookLM notebook URL.' },
+          notebook_id: {
+            type: 'string',
+            description: 'Notebook UUID (alternative to notebook_url).',
+          },
+          action: {
+            type: 'string',
+            enum: ['list', 'create', 'delete'],
+            description: 'Default list.',
+          },
+          name: { type: 'string', description: 'Label name (for create).' },
+          emoji: { type: 'string', description: 'Optional label emoji (for create).' },
+          label_ids: {
+            type: 'array',
+            items: { type: 'string' },
+            description: 'Label ids to delete (for delete).',
+          },
+        },
       },
     },
   ];
@@ -3880,6 +3926,77 @@ export class ToolHandlers {
     } catch (error) {
       const msg = error instanceof Error ? error.message : String(error);
       log.error(`❌ [TOOL] generate_study_aid failed: ${msg}`);
+      return { success: false, error: msg };
+    }
+  }
+
+  /** Resolve a notebook UUID from url/id/active-notebook, or null. */
+  private resolveNotebookId(notebook_url?: string, notebook_id?: string): string | null {
+    const url =
+      notebook_url ||
+      (notebook_id ? `https://${NOTEBOOK_PRIMARY_HOST}/notebook/${notebook_id}` : undefined) ||
+      this.library.getActiveNotebook()?.url;
+    return url ? this.notebookIdFromUrl(url) : notebook_id || null;
+  }
+
+  /** Generate + save a mind map from a notebook's sources (RPC-only extension). */
+  async handleGenerateMindMap(args: {
+    notebook_url?: string;
+    notebook_id?: string;
+    title?: string;
+  }): Promise<ToolResult<MindMapResult>> {
+    log.info(`🔧 [TOOL] generate_mind_map called`);
+    try {
+      const notebookId = this.resolveNotebookId(args.notebook_url, args.notebook_id);
+      if (!notebookId) return { success: false, error: 'No notebook specified' };
+      const client = await this.getRpcClient();
+      const sourceIds = await new NotebookRpc(client).getSourceIds(notebookId);
+      if (!sourceIds.length) return { success: false, error: 'notebook has no sources' };
+      const res = await new MindMapRpc(client).generateAndSave(
+        notebookId,
+        sourceIds,
+        args.title || 'Mind Map'
+      );
+      log.success(`  ✅ (RPC) mind map saved: ${res.mindMapId}`);
+      return { success: true, data: res };
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error);
+      log.error(`❌ [TOOL] generate_mind_map failed: ${msg}`);
+      return { success: false, error: msg };
+    }
+  }
+
+  /** Manage source labels (RPC-only extension): list / create / delete. */
+  async handleLabels(args: {
+    notebook_url?: string;
+    notebook_id?: string;
+    action?: 'list' | 'create' | 'delete';
+    name?: string;
+    emoji?: string;
+    label_ids?: string[];
+  }): Promise<ToolResult<{ labels: Label[] }>> {
+    log.info(`🔧 [TOOL] labels (${args.action || 'list'}) called`);
+    try {
+      const notebookId = this.resolveNotebookId(args.notebook_url, args.notebook_id);
+      if (!notebookId) return { success: false, error: 'No notebook specified' };
+      const labels = new LabelsRpc(await this.getRpcClient());
+      const action = args.action || 'list';
+      if (action === 'create') {
+        if (!args.name) return { success: false, error: 'name required to create a label' };
+        return {
+          success: true,
+          data: { labels: await labels.create(notebookId, args.name, args.emoji || '') },
+        };
+      }
+      if (action === 'delete') {
+        if (!args.label_ids?.length)
+          return { success: false, error: 'label_ids required to delete' };
+        await labels.delete(notebookId, args.label_ids);
+      }
+      return { success: true, data: { labels: await labels.list(notebookId) } };
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error);
+      log.error(`❌ [TOOL] labels failed: ${msg}`);
       return { success: false, error: msg };
     }
   }
