@@ -54,6 +54,7 @@ import { BatchExecuteClient } from '../rpc/batchexecute.js';
 import { NotebookRpc } from '../rpc/notebooks-rpc.js';
 import { SourcesRpc } from '../rpc/sources-rpc.js';
 import { QueryRpc } from '../rpc/query-rpc.js';
+import { StudioRpc, type StudioType } from '../rpc/studio-rpc.js';
 import { ContentManager } from '../content/content-manager.js';
 import { runBatchToVault, type BatchToVaultResult } from '../utils/vault-writer.js';
 import type {
@@ -3091,6 +3092,53 @@ export class ToolHandlers {
           success: false,
           error: 'No notebook URL provided and no active notebook set',
         };
+      }
+
+      // RPC path (default): generate via CREATE_STUDIO + poll — far faster than
+      // the browser Studio flow (report ~13s vs minutes) and no browser. Falls
+      // back to the browser flow on any RPC failure.
+      const RPC_STUDIO_TYPES = new Set<string>([
+        'audio_overview',
+        'video',
+        'infographic',
+        'presentation',
+        'report',
+        'data_table',
+      ]);
+      const genNotebookId = this.notebookIdFromUrl(resolvedNotebookUrl);
+      if (this.useRpcTransport() && genNotebookId && RPC_STUDIO_TYPES.has(content_type)) {
+        try {
+          const client = await this.getRpcClient();
+          const sourceIds = await new NotebookRpc(client).getSourceIds(genNotebookId);
+          if (sourceIds.length === 0) throw new Error('notebook has no sources to generate from');
+          const res = await new StudioRpc(client).generate(
+            genNotebookId,
+            content_type as StudioType,
+            sourceIds,
+            { language: language || CONFIG.uiLocale, focus: custom_instructions || '' }
+          );
+          const ok = res.status === 'completed';
+          log.success(`  ✅ (RPC) generate ${content_type}: ${res.status}`);
+          const mappedStatus = ok
+            ? 'ready'
+            : res.status === 'in_progress'
+              ? 'generating'
+              : 'failed';
+          return {
+            success: ok,
+            data: {
+              success: ok,
+              contentType: content_type,
+              status: mappedStatus,
+              textContent: res.textContent || res.title,
+            },
+            error: ok ? undefined : `Generation ${res.status}`,
+          };
+        } catch (e) {
+          log.warning(
+            `  ⚠️ RPC generate failed (${e instanceof Error ? e.message : String(e)}); falling back to browser flow...`
+          );
+        }
       }
 
       // Get or create session
