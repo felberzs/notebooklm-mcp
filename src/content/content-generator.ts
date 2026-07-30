@@ -314,7 +314,22 @@ export class ContentGenerator {
   private async selectArtifactPreset(config: ContentTypeConfig): Promise<void> {
     const anyPreset = this.page.locator('button.primary-action-button').first();
     if (!(await anyPreset.isVisible({ timeout: 4000 }).catch(() => false))) {
-      return; // direct-generation type (e.g. audio) — no dialog appeared
+      // No preset tiles. Some types (e.g. video) instead open a
+      // "Personnaliser le X" customization dialog with a dedicated
+      // "Générer"/"Generate" button and sensible pre-selected defaults — click
+      // it. If neither exists, the type generates directly on the card click
+      // (e.g. audio), so there is nothing more to do.
+      const generateBtn = this.page
+        .locator(
+          'mat-dialog-container button:has-text("Générer"), mat-dialog-container button:has-text("Generate"), [role="dialog"] button:has-text("Générer"), [role="dialog"] button:has-text("Generate")'
+        )
+        .first();
+      if (await generateBtn.isVisible({ timeout: 2000 }).catch(() => false)) {
+        await this.page.mouse.move(0, 0).catch(() => undefined);
+        await generateBtn.click({ force: true, timeout: 10000 }).catch(() => undefined);
+        log.info(`  Clicked "Générer" in ${config.displayName} customization dialog`);
+      }
+      return; // direct-generation type or customization dialog handled
     }
     const buttons = await this.page.locator('button.primary-action-button').all();
     for (const b of buttons) {

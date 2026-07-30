@@ -380,7 +380,7 @@ export const CONTENT_CONFIGS: Record<ContentType, ContentTypeConfig> = {
       cinematic: 'Use a CINEMATIC style with film-like visual aesthetics.',
       minimalist: 'Use a MINIMALIST style with clean, simple visuals.',
     },
-    waitTimeout: 600000, // 10 minutes (video generation can be slow)
+    waitTimeout: 900000, // 15 minutes (Veo video generation is very slow)
     isMedia: true,
     mimeType: 'video/mp4',
     supportsCustomInstructions: true,
@@ -455,7 +455,7 @@ export const CONTENT_CONFIGS: Record<ContentType, ContentTypeConfig> = {
       horizontal: 'HORIZONTAL (landscape orientation, wide format)',
       vertical: 'VERTICAL (portrait orientation, tall format)',
     },
-    waitTimeout: 300000, // 5 minutes
+    waitTimeout: 600000, // 10 minutes (image generation can be slow, like slides)
     isMedia: true,
     mimeType: 'image/png',
     supportsCustomInstructions: true,
