@@ -16,7 +16,7 @@
  */
 
 import type { Page } from 'patchright';
-import { randomDelay, realisticClick, humanType } from '../utils/stealth-utils.js';
+import { randomDelay, humanType } from '../utils/stealth-utils.js';
 import {
   waitForLatestAnswer,
   snapshotAllResponses,
@@ -25,12 +25,7 @@ import {
 } from '../utils/page-utils.js';
 import { log } from '../utils/logger.js';
 import type { ContentType, ContentGenerationInput, ContentGenerationResult } from './types.js';
-import {
-  type ContentTypeConfig,
-  getContentConfig,
-  buildChatPrompt,
-  getFormatFromInput,
-} from './content-templates.js';
+import { type ContentTypeConfig, getContentConfig, buildChatPrompt } from './content-templates.js';
 
 /**
  * Result of finding a button in the UI
@@ -106,38 +101,39 @@ export class ContentGenerator {
         };
       }
 
-      // Step 3: Try to find and click the generation button
+      // Step 3: Trigger generation via the Studio card.
+      //
+      // Post-rebrand flow (verified live 2026-07-30): Studio is a grid of
+      // generation cards. Clicking a card either generates directly
+      // (audio_overview) or opens a "Créer un X" dialog of format-preset tiles
+      // — clicking a preset starts generation. Completion is signalled by a new
+      // `<artifact-library-item>` appearing in the Studio library, regardless
+      // of type. We snapshot the artifact count first so we can detect exactly
+      // the one this call produces.
+      const baselineArtifacts = await this.countArtifacts();
+
       const buttonResult = await this.findButton(config.buttonSelectors);
 
       if (buttonResult.found && buttonResult.selector) {
-        log.info(`  Found ${config.displayName} button: ${buttonResult.selector}`);
+        log.info(`  Found ${config.displayName} card: ${buttonResult.selector}`);
 
-        // Click the button to start generation
-        await realisticClick(this.page, buttonResult.selector, true);
-        log.info(`  Clicked ${config.displayName} button`);
+        // Force-click past the hover tooltip that overlays Studio cards and
+        // intercepts pointer events (a normal click times out at 30s).
+        await this.page.mouse.move(0, 0).catch(() => undefined);
+        await this.page
+          .locator(buttonResult.selector)
+          .first()
+          .click({ force: true, timeout: 15000 });
+        log.info(`  Clicked ${config.displayName} card`);
 
-        // Step 3.5: Handle format selection if this content type has format options
-        const formatSelected = await this.selectFormat(input, config);
-        if (formatSelected) {
-          log.info(`  Format selected successfully`);
-        }
+        // If a format-preset dialog opened, pick a preset to start generation.
+        // Audio has no dialog (generates directly), so this is a no-op there.
+        await this.selectArtifactPreset(config);
 
-        // Step 3.6: Handle language selection if specified
-        const languageSelected = await this.selectLanguage(input, config);
-        if (languageSelected) {
-          log.info(`  Language selected successfully`);
-        }
+        log.info(`  Started ${config.displayName} generation via Studio`);
 
-        // Step 3.7: Handle style selection for video content
-        const styleSelected = await this.selectStyle(input, config);
-        if (styleSelected) {
-          log.info(`  Style selected successfully`);
-        }
-
-        log.info(`  Started ${config.displayName} generation via Studio button`);
-
-        // Wait for generation to complete
-        const waitResult = await this.waitForContentGeneration(input.type, config);
+        // Wait for a NEW artifact to appear in the Studio library.
+        const waitResult = await this.waitForArtifact(baselineArtifacts, config);
 
         if (waitResult.ready) {
           log.success(`  ${config.displayName} generated successfully via Studio`);
@@ -296,171 +292,109 @@ export class ContentGenerator {
   }
 
   // ============================================================================
-  // Format Selection
+  // Studio artifact flow (post "Gemini Notebook" rebrand)
   // ============================================================================
 
-  /**
-   * Select format option after clicking the main content button
-   * Looks for format selection UI (buttons, dropdowns, options) and clicks the appropriate one
-   *
-   * @param input Content generation input with format options
-   * @param config Content type configuration
-   * @returns True if a format was selected, false if no format UI found
-   */
-  private async selectFormat(
-    input: ContentGenerationInput,
-    config: ContentTypeConfig
-  ): Promise<boolean> {
-    // Check if this content type has format options
-    if (!config.formatSelectors) {
-      return false;
-    }
-
-    // Get the format value from input
-    const format = getFormatFromInput(input);
-    const effectiveFormat = format || config.defaultFormat;
-
-    if (!effectiveFormat) {
-      log.info(`  No format specified and no default, skipping format selection`);
-      return false;
-    }
-
-    // Get selectors for this format
-    const formatConfig = config.formatSelectors[effectiveFormat];
-    if (!formatConfig) {
-      log.warning(`  Unknown format '${effectiveFormat}' for ${config.displayName}`);
-      return false;
-    }
-
-    log.info(`  Looking for ${formatConfig.displayName} format option...`);
-
-    // Wait a moment for the format selection UI to appear after clicking main button
-    await randomDelay(500, 1000);
-
-    // Try to find and click the format button
-    const formatButtonResult = await this.findButton(formatConfig.selectors);
-
-    if (formatButtonResult.found && formatButtonResult.selector) {
-      log.info(`  Found ${formatConfig.displayName} format button: ${formatButtonResult.selector}`);
-      await realisticClick(this.page, formatButtonResult.selector, true);
-      await randomDelay(300, 600);
-      log.info(`  Selected ${formatConfig.displayName} format`);
-      return true;
-    }
-
-    // Format button not found - this is normal if UI doesn't have format selection
-    log.info(`  No format selection UI found, proceeding with default`);
-    return false;
+  /** Count generated artifacts currently in the Studio library. */
+  private async countArtifacts(): Promise<number> {
+    return await this.page
+      .locator('artifact-library artifact-library-item')
+      .count()
+      .catch(() => 0);
   }
 
-  // ============================================================================
-  // Style Selection (Video)
-  // ============================================================================
-
   /**
-   * Select video style option after clicking the main content button
-   * Looks for style selection UI (buttons, dropdowns, options) and clicks the appropriate one
-   *
-   * @param input Content generation input with style options
-   * @param config Content type configuration
-   * @returns True if a style was selected, false if no style UI found
+   * After clicking a Studio card, some content types (report, presentation,
+   * video, infographic, data_table) open a "Créer un X" dialog whose format
+   * tiles are `button.primary-action-button[aria-label="…"]`; clicking a tile
+   * starts generation. Audio has no dialog (generates directly) so this no-ops.
+   * We skip the "Créer le vôtre" / "Create your own" customiser and pick the
+   * first ready-made preset.
    */
-  private async selectStyle(
-    input: ContentGenerationInput,
-    config: ContentTypeConfig
-  ): Promise<boolean> {
-    // Check if this content type has style options (only video)
-    if (!config.styleSelectors || input.type !== 'video') {
-      return false;
+  private async selectArtifactPreset(config: ContentTypeConfig): Promise<void> {
+    const anyPreset = this.page.locator('button.primary-action-button').first();
+    if (!(await anyPreset.isVisible({ timeout: 4000 }).catch(() => false))) {
+      return; // direct-generation type (e.g. audio) — no dialog appeared
     }
-
-    // Get the style value from input or use default
-    const style = input.videoStyle || config.defaultStyle;
-    if (!style) {
-      log.info(`  No style specified and no default, skipping style selection`);
-      return false;
+    const buttons = await this.page.locator('button.primary-action-button').all();
+    for (const b of buttons) {
+      const aria = (await b.getAttribute('aria-label').catch(() => '')) || '';
+      if (!aria) continue;
+      // Skip the custom-report builder — it opens a form, not a direct generate.
+      if (/créer le vôtre|create your own|personnalis|eigene erstellen|カスタム/i.test(aria)) {
+        continue;
+      }
+      await this.page.mouse.move(0, 0).catch(() => undefined);
+      await b.click({ force: true, timeout: 10000 }).catch(() => undefined);
+      log.info(`  Selected ${config.displayName} preset: ${aria}`);
+      return;
     }
-
-    // Get selectors for this style
-    const styleConfig = config.styleSelectors[style];
-    if (!styleConfig) {
-      log.warning(`  Unknown style '${style}' for ${config.displayName}`);
-      return false;
+    // Fallback: second tile (index 0 is usually the customiser).
+    if (buttons.length > 1) {
+      await buttons[1].click({ force: true, timeout: 10000 }).catch(() => undefined);
     }
-
-    log.info(`  Looking for ${styleConfig.displayName} style option...`);
-
-    // Wait a moment for the style selection UI to appear
-    await randomDelay(300, 600);
-
-    // Try to find and click the style button
-    const styleButtonResult = await this.findButton(styleConfig.selectors);
-
-    if (styleButtonResult.found && styleButtonResult.selector) {
-      log.info(`  Found ${styleConfig.displayName} style button: ${styleButtonResult.selector}`);
-      await realisticClick(this.page, styleButtonResult.selector, true);
-      await randomDelay(300, 600);
-      log.info(`  Selected ${styleConfig.displayName} style`);
-      return true;
-    }
-
-    // Style button not found - this is normal if UI doesn't have style selection
-    log.info(`  No style selection UI found, proceeding with default`);
-    return false;
   }
 
-  // ============================================================================
-  // Language Selection
-  // ============================================================================
-
   /**
-   * Select language option for content generation
-   * Opens the language dropdown and selects the specified language
-   *
-   * @param input Content generation input with language option
-   * @param config Content type configuration
-   * @returns True if a language was selected, false if no language UI found
+   * Wait for a NEW artifact to appear in the Studio library after triggering
+   * generation. Post-rebrand, every completed artifact renders as an
+   * `<artifact-library-item>` (title in `.artifact-title`), so a count above
+   * the pre-trigger baseline is the universal completion signal — replacing the
+   * per-type `existsSelectors`, which the rebrand invalidated.
    */
-  private async selectLanguage(
-    input: ContentGenerationInput,
+  private async waitForArtifact(
+    baseline: number,
     config: ContentTypeConfig
-  ): Promise<boolean> {
-    // Check if this content type has language options and a language is specified
-    if (!config.languageSelectors || !input.language) {
-      return false;
-    }
-
-    log.info(`  Looking for language selector (${input.language})...`);
-
-    // Try to open the language dropdown
-    const dropdownResult = await this.findButton(config.languageSelectors.dropdownTrigger);
-    if (!dropdownResult.found || !dropdownResult.selector) {
-      log.info(`  No language dropdown found, proceeding with default`);
-      return false;
-    }
-
-    // Click to open dropdown
-    await realisticClick(this.page, dropdownResult.selector, true);
-    await randomDelay(500, 800);
-
-    // Build language-specific selectors by replacing {language} placeholder
-    const languageSelectors = config.languageSelectors.optionPattern.map((s) =>
-      s.replace('{language}', input.language!)
+  ): Promise<ContentWaitResult> {
+    log.info(
+      `  Waiting for ${config.displayName} artifact (up to ${config.waitTimeout / 60000} min)...`
     );
-
-    // Try to find and click the language option
-    const languageResult = await this.findButton(languageSelectors);
-    if (languageResult.found && languageResult.selector) {
-      await realisticClick(this.page, languageResult.selector, true);
-      await randomDelay(300, 600);
-      log.info(`  Selected language: ${input.language}`);
-      return true;
+    const startTime = Date.now();
+    while (Date.now() - startTime < config.waitTimeout) {
+      const count = await this.countArtifacts();
+      if (count > baseline) {
+        // The item is inserted immediately with a placeholder title
+        // ("Création du rapport…" / "Génération…") and only later resolves to
+        // the real title + a `.artifact-details` line ("Briefing Doc · N
+        // sources · …"). So `count > baseline` alone fires too early — wait
+        // until the newest item is no longer in its generating state.
+        const item = this.page.locator('artifact-library artifact-library-item').first();
+        const title = (
+          (await item
+            .locator('.artifact-title')
+            .first()
+            .textContent()
+            .catch(() => '')) || ''
+        ).trim();
+        const details = (
+          (await item
+            .locator('.artifact-details')
+            .first()
+            .textContent()
+            .catch(() => '')) || ''
+        ).trim();
+        const stillGenerating =
+          !details || /création|génération|creating|generating|作成中|生成中/i.test(title);
+        if (!stillGenerating) {
+          return { source: 'studio', ready: true, content: title || undefined };
+        }
+      }
+      const errorEl = await this.page.$('.error-message, [role="alert"]:has-text("error")');
+      if (errorEl) {
+        const errorText = await errorEl.textContent();
+        return {
+          source: 'studio',
+          ready: false,
+          error: errorText || `${config.displayName} generation failed`,
+        };
+      }
+      await this.page.waitForTimeout(3000);
     }
-
-    // Language option not found - close dropdown by pressing Escape
-    log.info(`  Language '${input.language}' not found in dropdown`);
-    await this.page.keyboard.press('Escape');
-    return false;
+    return {
+      source: 'studio',
+      ready: false,
+      error: `Timeout waiting for ${config.displayName} generation after ${config.waitTimeout / 1000}s`,
+    };
   }
 
   // ============================================================================

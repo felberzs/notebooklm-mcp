@@ -12,15 +12,10 @@
 import type { Page, Locator, ElementHandle } from 'patchright';
 import path from 'path';
 import { existsSync } from 'fs';
-import { randomDelay, realisticClick, humanType } from '../utils/stealth-utils.js';
+import { randomDelay, realisticClick } from '../utils/stealth-utils.js';
 import { log } from '../utils/logger.js';
 import { CONFIG } from '../config.js';
-import {
-  waitForLatestAnswer,
-  snapshotAllResponses,
-  countAnswerContainers,
-  isErrorMessage,
-} from '../utils/page-utils.js';
+import { snapshotAllResponses } from '../utils/page-utils.js';
 import { setLocale, tAll } from '../i18n/index.js';
 
 // Initialize i18n with configured locale
@@ -1682,146 +1677,6 @@ export class ContentManager {
   // Chat-Based Content Generation (New UI - Dec 2024)
   // ============================================================================
 
-  /**
-   * Send a message in the chat interface (without waiting for response)
-   * This is the new way to generate content in NotebookLM
-   * Uses the same typing and submission approach as ask_question for reliability
-   */
-  private async sendChatMessage(message: string): Promise<void> {
-    log.info(`  💬 Sending chat message: "${message.substring(0, 50)}..."`);
-
-    // Find the chat input (same approach as BrowserSession.findChatInput)
-    const chatInputSelectors = [
-      'textarea.query-box-input', // PRIMARY - same as Python implementation
-      'textarea[aria-label*="query"]',
-      'textarea[aria-label*="Zone de requête"]',
-    ];
-
-    let inputSelector: string | null = null;
-    for (const selector of chatInputSelectors) {
-      try {
-        const input = await this.page.waitForSelector(selector, {
-          state: 'visible',
-          timeout: 3000,
-        });
-        if (input) {
-          inputSelector = selector;
-          log.info(`  ✅ Found chat input: ${selector}`);
-          break;
-        }
-      } catch {
-        continue;
-      }
-    }
-
-    if (!inputSelector) {
-      throw new Error('Chat input not found');
-    }
-
-    // Clear any existing text first
-    const inputEl = await this.page.$(inputSelector);
-    if (inputEl) {
-      await inputEl.click();
-      await this.page.keyboard.press('Control+A');
-      await this.page.keyboard.press('Backspace');
-      await randomDelay(200, 400);
-    }
-
-    // Type the message with human-like behavior (same as BrowserSession.askQuestion)
-    log.info(`  ⌨️ Typing message with human-like behavior...`);
-    await humanType(this.page, inputSelector, message, {
-      withTypos: false, // No typos for prompts to avoid confusion
-      wpm: 150, // Faster typing for long prompts
-    });
-
-    // Small pause before submitting
-    await randomDelay(500, 1000);
-
-    // Submit with Enter key (same as BrowserSession.askQuestion)
-    log.info(`  📤 Submitting message...`);
-    await this.page.keyboard.press('Enter');
-
-    // Small pause after submit
-    await randomDelay(1000, 1500);
-
-    log.info(`  ✅ Message sent`);
-  }
-
-  /**
-   * Wait for generated content to appear in chat
-   * Uses the same proven approach as /ask endpoint (waitForLatestAnswer with full timeout)
-   */
-  private async waitForGeneratedContent(
-    contentType: ContentType,
-    timeoutMs: number = 600000,
-    baselineContainerCount?: number
-  ): Promise<{ source: 'chat' | 'studio'; content: string }> {
-    log.info(`  ⏳ Waiting for ${contentType} response (up to ${timeoutMs / 60000} minutes)...`);
-
-    // Scroll to bottom to ensure we see all messages
-    await this.scrollChatToBottom();
-
-    // Snapshot existing chat responses (debug/logging only when a position
-    // baseline is available — new-answer detection then uses DOM position)
-    const existingChatResponses = await snapshotAllResponses(this.page);
-    log.info(`  📊 Ignoring ${existingChatResponses.length} existing chat responses`);
-
-    // Use the same proven logic as /ask endpoint - wait for new chat response
-    const response = await waitForLatestAnswer(this.page, {
-      question: '', // Empty question since we already sent the message
-      timeoutMs: timeoutMs,
-      pollIntervalMs: 2000, // Poll every 2 seconds
-      ignoreTexts: existingChatResponses,
-      baselineContainerCount,
-      debug: true, // Enable debug to see what's happening
-    });
-
-    // Check if response is an error message from NotebookLM
-    if (response && isErrorMessage(response)) {
-      log.error(`  ❌ NotebookLM returned an error: "${response}"`);
-      throw new Error(`NotebookLM error: ${response}`);
-    }
-
-    if (response && response.length > 50) {
-      log.success(`  ✅ Content received (${response.length} chars)`);
-      return { source: 'chat', content: response };
-    }
-
-    throw new Error(`Timeout waiting for ${contentType} generation after ${timeoutMs / 1000}s`);
-  }
-
-  /**
-   * Scroll chat container to bottom to ensure latest messages are visible
-   */
-  private async scrollChatToBottom(): Promise<void> {
-    try {
-      // Try multiple selectors for the chat container
-      const chatContainerSelectors = [
-        '.chat-scroll-container',
-        '.messages-container',
-        '[class*="scroll"]',
-        '.query-container',
-      ];
-
-      for (const selector of chatContainerSelectors) {
-        const container = await this.page.$(selector);
-        if (container) {
-          await container.evaluate((el) => {
-            el.scrollTop = el.scrollHeight;
-          });
-          log.debug(`  📜 Scrolled chat to bottom using ${selector}`);
-          return;
-        }
-      }
-
-      // Fallback: scroll the whole page
-      await this.page.evaluate(`window.scrollTo(0, document.body.scrollHeight)`);
-      log.debug(`  📜 Scrolled page to bottom (fallback)`);
-    } catch (error) {
-      log.debug(`  ⚠️ Could not scroll: ${error}`);
-    }
-  }
-
   // ============================================================================
   // Content Generation
   // ============================================================================
@@ -1845,12 +1700,12 @@ export class ContentManager {
     log.info(`🎨 Generating content: ${input.type}`);
 
     try {
-      if (input.type === 'audio_overview') {
-        return await this.generateAudioOverview(input);
-      }
-
-      // Use generic ContentGenerator for all other supported types
+      // All supported types (including audio_overview) go through the generic
+      // ContentGenerator, which drives the rebranded Studio artifact flow
+      // (click card → optional preset dialog → wait for the new
+      // <artifact-library-item>). Audio just has no preset dialog.
       if (
+        input.type === 'audio_overview' ||
         input.type === 'video' ||
         input.type === 'infographic' ||
         input.type === 'presentation' ||
@@ -1913,105 +1768,10 @@ export class ContentManager {
     }
   }
 
-  /**
-   * Generate Audio Overview (podcast)
-   *
-   * NOTE (Dec 2024): NotebookLM UI has changed significantly.
-   * Audio generation now works via chat requests or may require specific UI interaction.
-   * This method attempts both approaches.
-   */
-  async generateAudioOverview(input: ContentGenerationInput): Promise<ContentGenerationResult> {
-    log.info(`🎙️ Generating Audio Overview...`);
-
-    try {
-      // First, check Studio for existing audio or audio generation button
-      await this.navigateToStudio();
-      await this.page.waitForTimeout(1000);
-
-      // Check if audio already exists
-      const existingAudio = await this.page.$('audio, .audio-player, [class*="audio-overview"]');
-      if (existingAudio) {
-        log.info(`  ℹ️ Audio Overview already exists`);
-        return {
-          success: true,
-          contentType: 'audio_overview',
-          status: 'ready',
-        };
-      }
-
-      // Try to find audio generation button in Studio
-      const audioSelectors = [
-        'button:has-text("Audio")',
-        'button:has-text("Generate audio")',
-        'button:has-text("Générer")',
-        'button[aria-label*="audio" i]',
-        '[class*="audio"] button',
-        'button:has(mat-icon:has-text("mic"))',
-        'button:has(mat-icon:has-text("podcast"))',
-      ];
-
-      for (const selector of audioSelectors) {
-        try {
-          const btn = this.page.locator(selector).first();
-          if (await btn.isVisible({ timeout: 1000 })) {
-            log.info(`  ✅ Found audio button: ${selector}`);
-
-            // Add custom instructions if provided
-            if (input.customInstructions) {
-              await this.addCustomInstructions(input.customInstructions);
-            }
-
-            await btn.click();
-            log.info(`  ✅ Started audio generation`);
-
-            // Wait for generation
-            return await this.waitForAudioGeneration();
-          }
-        } catch {
-          continue;
-        }
-      }
-
-      // Fallback: Try chat-based approach
-      log.info(`  ℹ️ No audio button found, trying chat-based approach...`);
-      await this.navigateToDiscussion();
-
-      let prompt =
-        'Create an audio overview (Deep Dive podcast) for this notebook. Generate a conversational podcast script that covers the main topics from all sources.';
-
-      if (input.customInstructions) {
-        prompt += `\n\nCustom instructions: ${input.customInstructions}`;
-      }
-
-      // Position baseline for new-answer detection — captured before the
-      // message is sent, so the container that appears afterward is
-      // unambiguously the new answer even if its text repeats a prior one.
-      const baselineContainerCount = await countAnswerContainers(this.page);
-      await this.sendChatMessage(prompt);
-      const result = await this.waitForGeneratedContent(
-        'audio_overview',
-        600000,
-        baselineContainerCount
-      );
-
-      if (result.content && result.content.length > 100) {
-        log.success(`  ✅ Audio overview script generated via ${result.source}`);
-        return {
-          success: true,
-          contentType: 'audio_overview',
-          status: 'ready',
-          textContent: result.content,
-        };
-      }
-
-      throw new Error(
-        'Could not generate audio overview - button not found and chat approach failed'
-      );
-    } catch (error) {
-      const errorMsg = error instanceof Error ? error.message : String(error);
-      return { success: false, contentType: 'audio_overview', error: errorMsg };
-    }
-  }
+  // NOTE: audio_overview generation now goes through the generic
+  // ContentGenerator (Studio artifact flow), like every other content type —
+  // see generateContent()'s dispatch. The old bespoke generateAudioOverview
+  // (direct-button click + chat fallback) was removed with the rebrand fix.
 
   // NOTE: generateBriefingDoc, generateStudyGuide, generateTimeline, generateFAQ,
   // generateTOC, and generateDocumentContent methods were removed because they
@@ -2352,82 +2112,6 @@ export class ContentManager {
     }
 
     log.warning(`  ⚠️ Could not find Studio tab, content generation may fail`);
-  }
-
-  /**
-   * Add custom instructions for content generation
-   */
-  private async addCustomInstructions(instructions: string): Promise<void> {
-    const instructionSelectors = [
-      'textarea[placeholder*="instruction"]',
-      'textarea[placeholder*="focus"]',
-      'textarea[placeholder*="custom"]',
-      '.custom-instructions textarea',
-    ];
-
-    for (const selector of instructionSelectors) {
-      try {
-        const textarea = await this.page.$(selector);
-        if (textarea && (await textarea.isVisible())) {
-          await textarea.fill(instructions);
-          log.info(`  ✅ Custom instructions added`);
-          return;
-        }
-      } catch {
-        continue;
-      }
-    }
-  }
-
-  /**
-   * Wait for audio generation to complete
-   */
-  private async waitForAudioGeneration(): Promise<ContentGenerationResult> {
-    log.info(`  ⏳ Waiting for audio generation (this may take several minutes)...`);
-
-    const timeout = 600000; // 10 minutes
-    const startTime = Date.now();
-
-    while (Date.now() - startTime < timeout) {
-      // Check for errors
-      const errorEl = await this.page.$('.error-message, [role="alert"]:has-text("error")');
-      if (errorEl) {
-        const errorText = await errorEl.textContent();
-        return {
-          success: false,
-          contentType: 'audio_overview',
-          error: errorText || 'Audio generation failed',
-          status: 'failed',
-        };
-      }
-
-      // Check for audio player (generation complete)
-      const audioPlayer = await this.page.$(
-        'audio, .audio-player, [data-component="audio-player"]'
-      );
-      if (audioPlayer) {
-        log.success(`  ✅ Audio Overview generated!`);
-        return { success: true, contentType: 'audio_overview', status: 'ready' };
-      }
-
-      // Check progress
-      const progressEl = await this.page.$('[role="progressbar"], .progress-bar');
-      if (progressEl) {
-        const progress = await progressEl.getAttribute('aria-valuenow');
-        if (progress) {
-          log.info(`  ⏳ Generation progress: ${progress}%`);
-        }
-      }
-
-      await this.page.waitForTimeout(5000);
-    }
-
-    return {
-      success: false,
-      contentType: 'audio_overview',
-      error: 'Timeout waiting for audio generation',
-      status: 'failed',
-    };
   }
 
   // ============================================================================

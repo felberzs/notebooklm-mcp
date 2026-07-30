@@ -265,6 +265,10 @@ export const CONTENT_CONFIGS: Record<ContentType, ContentTypeConfig> = {
     type: 'audio_overview',
     displayName: 'Audio Overview',
     buttonSelectors: [
+      // Rebrand (Gemini Notebook): Studio generation card, anchored by its
+      // language-independent mat-icon ligature. Audio generates directly on
+      // card click (no preset dialog). Kept first so it wins.
+      'div[role="button"].create-artifact-button-container:has(mat-icon:has-text("audio_magic_eraser"))',
       // Primary patterns
       'button:has-text("Audio")',
       'button:has-text("Generate audio")',
@@ -306,6 +310,10 @@ export const CONTENT_CONFIGS: Record<ContentType, ContentTypeConfig> = {
     type: 'video',
     displayName: 'Video',
     buttonSelectors: [
+      // Rebrand (Gemini Notebook): Studio generation card, anchored by its
+      // language-independent mat-icon ligature. Clicking the card starts
+      // generation. Kept first so it wins over the legacy fallbacks below.
+      'div[role="button"].create-artifact-button-container:has(mat-icon:has-text("subscriptions"))',
       // Primary patterns
       'button:has-text("Video")',
       'button:has-text("Generate video")',
@@ -385,6 +393,9 @@ export const CONTENT_CONFIGS: Record<ContentType, ContentTypeConfig> = {
     type: 'infographic',
     displayName: 'Infographic',
     buttonSelectors: [
+      // Rebrand (Gemini Notebook): Studio generation card, anchored by its
+      // language-independent mat-icon ligature (clicking the card generates).
+      'div[role="button"].create-artifact-button-container:has(mat-icon:has-text("stacked_bar_chart"))',
       // Primary patterns
       'button:has-text("Infographic")',
       'button:has-text("Generate infographic")',
@@ -457,6 +468,9 @@ export const CONTENT_CONFIGS: Record<ContentType, ContentTypeConfig> = {
     type: 'report',
     displayName: 'Report',
     buttonSelectors: [
+      // Rebrand (Gemini Notebook): Studio generation card, anchored by its
+      // language-independent mat-icon ligature (clicking the card generates).
+      'div[role="button"].create-artifact-button-container:has(mat-icon:has-text("auto_tab_group"))',
       // Primary patterns
       'button:has-text("Briefing")',
       'button:has-text("Report")',
@@ -533,6 +547,9 @@ export const CONTENT_CONFIGS: Record<ContentType, ContentTypeConfig> = {
     type: 'presentation',
     displayName: 'Presentation',
     buttonSelectors: [
+      // Rebrand (Gemini Notebook): Studio generation card, anchored by its
+      // language-independent mat-icon ligature (clicking the card generates).
+      'div[role="button"].create-artifact-button-container:has(mat-icon:has-text("tablet"))',
       // Primary patterns
       'button:has-text("Slides")',
       'button:has-text("Presentation")',
@@ -645,6 +662,9 @@ export const CONTENT_CONFIGS: Record<ContentType, ContentTypeConfig> = {
     type: 'data_table',
     displayName: 'Data Table',
     buttonSelectors: [
+      // Rebrand (Gemini Notebook): Studio generation card, anchored by its
+      // language-independent mat-icon ligature (clicking the card generates).
+      'div[role="button"].create-artifact-button-container:has(mat-icon:has-text("table_view"))',
       // Primary patterns
       'button:has-text("Table")',
       'button:has-text("Data")',
