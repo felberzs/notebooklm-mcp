@@ -52,6 +52,7 @@ import { randomDelay } from '../utils/stealth-utils.js';
 import type { Page } from 'patchright';
 import { BatchExecuteClient } from '../rpc/batchexecute.js';
 import { NotebookRpc } from '../rpc/notebooks-rpc.js';
+import { SourcesRpc } from '../rpc/sources-rpc.js';
 import { ContentManager } from '../content/content-manager.js';
 import { runBatchToVault, type BatchToVaultResult } from '../utils/vault-writer.js';
 import type {
@@ -2811,6 +2812,35 @@ export class ToolHandlers {
         };
       }
 
+      // RPC path (default) for URL / YouTube / text sources: the add RPC
+      // returns the new source id directly, so there is no post-upload polling
+      // or false-negative like the DOM flow. File / Google-Drive keep the
+      // browser flow (picker / resumable upload). Falls back on RPC failure.
+      const rpcNotebookId = this.notebookIdFromUrl(resolvedNotebookUrl);
+      const rpcAddable =
+        source_type === 'url' || source_type === 'youtube' || source_type === 'text';
+      if (this.useRpcTransport() && rpcAddable && rpcNotebookId) {
+        try {
+          const sources = await this.getSourcesRpc();
+          const src =
+            source_type === 'text'
+              ? await sources.addTextSource(rpcNotebookId, title || 'Pasted Text', text || '')
+              : await sources.addUrlSource(rpcNotebookId, url || '');
+          if (src?.id) {
+            log.success(`  ✅ (RPC) Source added: ${src.title} (${src.id})`);
+            return {
+              success: true,
+              data: { success: true, sourceId: src.id, sourceName: src.title, status: 'ready' },
+            };
+          }
+          log.warning('  ⚠️ RPC add_source returned no id; falling back to browser flow...');
+        } catch (e) {
+          log.warning(
+            `  ⚠️ RPC add_source failed (${e instanceof Error ? e.message : String(e)}); falling back to browser flow...`
+          );
+        }
+      }
+
       // Get or create session
       const session = await this.sessionManager.getOrCreateSession(
         session_id,
@@ -2895,6 +2925,26 @@ export class ToolHandlers {
           success: false,
           error: 'No notebook URL provided and no active notebook set',
         };
+      }
+
+      // RPC path (default) when the source is identified by a real UUID id:
+      // delete directly, no browser. Name-based deletes still resolve via the
+      // DOM (RPC source-listing lands in a later phase). Falls back on failure.
+      const delNotebookId = this.notebookIdFromUrl(resolvedNotebookUrl);
+      const isUuid =
+        !!source_id &&
+        /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/.test(source_id);
+      if (this.useRpcTransport() && delNotebookId && isUuid) {
+        try {
+          const sources = await this.getSourcesRpc();
+          await sources.deleteSource(delNotebookId, source_id!);
+          log.success(`  ✅ (RPC) Source deleted: ${source_id}`);
+          return { success: true, data: { success: true, sourceId: source_id } };
+        } catch (e) {
+          log.warning(
+            `  ⚠️ RPC delete_source failed (${e instanceof Error ? e.message : String(e)}); falling back to browser flow...`
+          );
+        }
       }
 
       // Get or create session
@@ -3496,17 +3546,29 @@ export class ToolHandlers {
   }
 
   /**
-   * Build a notebook RPC client from the shared authenticated context's
+   * Build a batchexecute RPC client from the shared authenticated context's
    * cookies. Reuses the existing browser session for auth (hybrid design);
    * the RPC calls themselves use no browser.
    */
-  private async getNotebookRpc(): Promise<NotebookRpc> {
+  private async getRpcClient(): Promise<BatchExecuteClient> {
     const sharedContextManager = this.sessionManager.getSharedContextManager();
     const context = await sharedContextManager.getOrCreateContext();
     const raw = await context.cookies('https://notebooklm.google.com');
     const cookies = raw.map((c) => ({ name: c.name, value: c.value }));
-    const client = new BatchExecuteClient({ cookies, hl: CONFIG.uiLocale });
-    return new NotebookRpc(client);
+    return new BatchExecuteClient({ cookies, hl: CONFIG.uiLocale });
+  }
+
+  private async getNotebookRpc(): Promise<NotebookRpc> {
+    return new NotebookRpc(await this.getRpcClient());
+  }
+
+  private async getSourcesRpc(): Promise<SourcesRpc> {
+    return new SourcesRpc(await this.getRpcClient());
+  }
+
+  /** Extract a notebook UUID from a NotebookLM URL, or null. */
+  private notebookIdFromUrl(url: string): string | null {
+    return url.match(/notebook\/([a-f0-9-]{36})/)?.[1] ?? null;
   }
 
   /**
