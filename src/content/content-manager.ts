@@ -1577,41 +1577,65 @@ export class ContentManager {
           }
         }
 
-        // Wait a bit more and try again - sources can take time to appear
-        log.info(`  ⏳ Source not found yet, waiting 5 more seconds...`);
-        await randomDelay(4000, 6000);
+        // The source may still be processing server-side. URL / website
+        // sources are fetched remotely and can take 20-40s to appear in the
+        // list AFTER the dialog closes — the previous single 5s wait gave a
+        // false "upload failed" for slow URL sources even though the source
+        // landed fine (text sources are instant, so they never hit this).
+        // Poll the reliable count signal (and the requested name) for up to
+        // ~60s before concluding failure.
+        log.info(`  ⏳ Source not visible yet — polling up to 60s (URL sources fetch remotely)...`);
+        const appearDeadline = Date.now() + 60000;
+        while (Date.now() < appearDeadline) {
+          await randomDelay(2500, 3500);
 
-        // Try again for pasted text source with different variations
-        for (const selector of pastedTextSelectors) {
           try {
-            const el = this.page.locator(selector).first();
-            if (await el.isVisible({ timeout: 1000 })) {
-              log.success(`  ✅ Found pasted text source after wait: ${selector}`);
-              // Detect source name from selector - find which locale's text is in the selector
-              const detectedName =
-                pastedTextNames.find((name) => selector.includes(name)) || pastedTextNames[0];
-              return { success: true, sourceName: detectedName, status: 'ready' };
+            const currentCount = await this.page.locator('.single-source-container').count();
+            if (initialSourceCount >= 0 && currentCount > initialSourceCount) {
+              let detectedSourceName: string | undefined;
+              try {
+                const currentLabels = await this.getAllSourceLabels();
+                detectedSourceName =
+                  this.findAddedSourceName(initialSourceLabels, currentLabels) ||
+                  this.findAddedSourceName(previousSourceNames, currentLabels);
+              } catch {
+                /* count alone is a sufficient success signal */
+              }
+              log.success(
+                `  ✅ Source added (count ${initialSourceCount} → ${currentCount})${
+                  detectedSourceName ? ` — name: ${detectedSourceName}` : ''
+                }`
+              );
+              return {
+                success: true,
+                sourceName: detectedSourceName ?? sourceName,
+                status: 'ready',
+              };
             }
           } catch {
-            continue;
+            /* keep polling */
+          }
+
+          // Also accept an explicit name match (pasted-text / requested name).
+          try {
+            const currentNames = await this.getVisibleSourceNames();
+            if (
+              currentNames.some(
+                (name) => this.normalizeSourceName(name) === this.normalizeSourceName(sourceName)
+              )
+            ) {
+              log.success(`  ✅ Source added and matched requested name: ${sourceName}`);
+              return { success: true, sourceName, status: 'ready' };
+            }
+          } catch {
+            /* keep polling */
           }
         }
 
-        // Try one more time to find the source by name
-        try {
-          const sourceByName = this.page
-            .locator(`[class*="source"]:has-text("${sourceName}")`)
-            .first();
-          if (await sourceByName.isVisible({ timeout: 2000 })) {
-            log.success(`  ✅ Source found after wait: ${sourceName}`);
-            return { success: true, sourceName, status: 'ready' };
-          }
-        } catch {
-          /* ignore */
-        }
-
-        // If still not found, this is a failure - don't assume success
-        log.warning(`  ⚠️ Dialog closed but source not found in list - upload likely failed`);
+        // If still not found after the full poll window, this is a real failure.
+        log.warning(
+          `  ⚠️ Dialog closed but source not found in list after 60s - upload likely failed`
+        );
         return {
           success: false,
           sourceName,
