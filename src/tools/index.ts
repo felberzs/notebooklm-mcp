@@ -53,6 +53,7 @@ import type { Page } from 'patchright';
 import { BatchExecuteClient } from '../rpc/batchexecute.js';
 import { NotebookRpc } from '../rpc/notebooks-rpc.js';
 import { SourcesRpc } from '../rpc/sources-rpc.js';
+import { QueryRpc } from '../rpc/query-rpc.js';
 import { ContentManager } from '../content/content-manager.js';
 import { runBatchToVault, type BatchToVaultResult } from '../utils/vault-writer.js';
 import type {
@@ -1663,6 +1664,57 @@ export class ToolHandlers {
                 `Or set an active notebook: PUT /notebooks/${allNotebooks[0].id}/activate`
             );
           }
+        }
+      }
+
+      // RPC path (default) for a fresh single-turn ask (no session_id): query
+      // the streaming endpoint directly — no browser — with structured
+      // citations parsed from the response. Follow-ups (session_id present)
+      // keep the browser session for conversation continuity. Falls back on
+      // any RPC failure.
+      const askNotebookId = resolvedNotebookUrl
+        ? this.notebookIdFromUrl(resolvedNotebookUrl)
+        : null;
+      if (this.useRpcTransport() && !session_id && askNotebookId) {
+        try {
+          await sendProgress?.('Asking NotebookLM (RPC)...', 2, 5);
+          const { query, notebooks } = await this.getQueryRpc();
+          const sources = await notebooks.getSources(askNotebookId);
+          const titleById = new Map(sources.map((s) => [s.id, s.title]));
+          const res = await query.ask(askNotebookId, question, {
+            sourceIds: sources.map((s) => s.id),
+          });
+          let sourcesOut: SourceCitations | undefined;
+          if (source_format !== 'none') {
+            sourcesOut = {
+              format: source_format,
+              citations: res.references.map((r) => ({
+                marker: `[${r.citation_number}]`,
+                number: r.citation_number,
+                sourceText: r.cited_text || '',
+                sourceName: titleById.get(r.source_id) || undefined,
+              })),
+              extraction_success: true,
+            };
+          }
+          await sendProgress?.('Question answered successfully!', 5, 5);
+          log.success('✅ [TOOL] ask_question completed (RPC)');
+          return {
+            success: true,
+            data: {
+              status: 'success',
+              question,
+              answer: res.answer.trimEnd(),
+              session_id: res.conversationId || askNotebookId,
+              notebook_url: resolvedNotebookUrl!,
+              session_info: { age_seconds: 0, message_count: 1, last_activity: Date.now() },
+              sources: sourcesOut,
+            },
+          };
+        } catch (e) {
+          log.warning(
+            `  ⚠️ RPC ask failed (${e instanceof Error ? e.message : String(e)}); falling back to browser...`
+          );
         }
       }
 
@@ -3564,6 +3616,12 @@ export class ToolHandlers {
 
   private async getSourcesRpc(): Promise<SourcesRpc> {
     return new SourcesRpc(await this.getRpcClient());
+  }
+
+  private async getQueryRpc(): Promise<{ query: QueryRpc; notebooks: NotebookRpc }> {
+    const client = await this.getRpcClient();
+    const notebooks = new NotebookRpc(client);
+    return { query: new QueryRpc(client, notebooks), notebooks };
   }
 
   /** Extract a notebook UUID from a NotebookLM URL, or null. */

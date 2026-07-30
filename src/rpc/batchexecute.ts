@@ -22,6 +22,8 @@ import { log } from '../utils/logger.js';
 import { resolveRpcId, resolveBuildLabel, type RpcName } from './rpc-ids.js';
 
 const DEFAULT_HOST = 'notebooklm.google.com';
+const QUERY_ENDPOINT =
+  '/_/LabsTailwindUi/data/google.internal.labs.tailwind.orchestration.v1.LabsTailwindOrchestrationService/GenerateFreeFormStreamed';
 const USER_AGENT =
   'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36';
 
@@ -110,6 +112,7 @@ export class BatchExecuteClient {
   private sessionId = '';
   private buildLabel = resolveBuildLabel();
   private bootstrapped = false;
+  private reqidCounter = 100000 + Math.floor(Date.now() % 800000);
 
   constructor(opts: BatchExecuteOptions) {
     const host = opts.baseHost?.trim() || DEFAULT_HOST;
@@ -171,6 +174,56 @@ export class BatchExecuteClient {
       await this.bootstrap(true);
       return await this.callOnce(name, params, sourcePath);
     }
+  }
+
+  /**
+   * POST to the streaming query endpoint (`GenerateFreeFormStreamed`, distinct
+   * from batchexecute) and return the raw response text for the caller to
+   * parse. `innerParams` is the query params array; the wire wraps it as
+   * `f.req=[null, JSON(innerParams)]`.
+   */
+  async postQueryStreamed(innerParams: unknown, timeoutMs = 120000): Promise<string> {
+    await this.bootstrap();
+    const doPost = async (): Promise<Response> => {
+      this.reqidCounter += 100000;
+      const query = new URLSearchParams({
+        bl: this.buildLabel,
+        hl: this.hl,
+        _reqid: String(this.reqidCounter),
+        rt: 'c',
+      });
+      if (this.sessionId) query.set('f.sid', this.sessionId);
+      const url = `${this.baseUrl}${QUERY_ENDPOINT}?${query.toString()}`;
+      const fReq = [null, JSON.stringify(innerParams)];
+      const body =
+        `f.req=${encodeURIComponent(JSON.stringify(fReq))}` +
+        (this.csrfToken ? `&at=${encodeURIComponent(this.csrfToken)}` : '') +
+        '&';
+      return fetch(url, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8',
+          Origin: this.baseUrl,
+          Referer: `${this.baseUrl}/`,
+          'X-Same-Domain': '1',
+          'X-Goog-Csrf-Token': this.csrfToken,
+          'User-Agent': USER_AGENT,
+          Cookie: this.cookieHeader,
+        },
+        body,
+        signal: AbortSignal.timeout(timeoutMs),
+      });
+    };
+
+    let res = await doPost();
+    if (res.status === 401 || res.status === 403 || /accounts\.google\.com/.test(res.url)) {
+      await this.bootstrap(true);
+      res = await doPost();
+    }
+    if (!res.ok) {
+      throw new Error(`Query endpoint HTTP ${res.status}`);
+    }
+    return res.text();
   }
 
   private async callOnce(name: RpcName, params: unknown, sourcePath: string): Promise<unknown> {

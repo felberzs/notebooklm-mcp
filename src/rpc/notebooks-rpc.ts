@@ -64,6 +64,36 @@ export class NotebookRpc {
     return { id, name: title || 'Untitled notebook', url: notebookUrl(id) };
   }
 
+  /**
+   * Get a notebook's sources (id + title). get_notebook result: `data[0][1]` =
+   * sources; each source `[[id], title, …]`.
+   */
+  async getSources(notebookId: string): Promise<Array<{ id: string; title: string }>> {
+    const result = (await this.client.call(
+      'GET_NOTEBOOK',
+      [notebookId, null, [2], null, 0],
+      `/notebook/${notebookId}`
+    )) as unknown;
+    const info = Array.isArray((result as unknown[])?.[0])
+      ? ((result as unknown[])[0] as unknown[])
+      : undefined;
+    const sources = info && Array.isArray(info[1]) ? (info[1] as unknown[]) : [];
+    const out: Array<{ id: string; title: string }> = [];
+    for (const s of sources) {
+      if (!Array.isArray(s)) continue;
+      const wrapper = s[0];
+      const id = Array.isArray(wrapper) ? (wrapper[0] as string) : undefined;
+      if (typeof id !== 'string') continue;
+      out.push({ id, title: typeof s[1] === 'string' ? s[1] : '' });
+    }
+    return out;
+  }
+
+  /** Source ids of a notebook (needed to scope a query). */
+  async getSourceIds(notebookId: string): Promise<string[]> {
+    return (await this.getSources(notebookId)).map((s) => s.id);
+  }
+
   /** Delete a single notebook by id. */
   async deleteNotebook(id: string): Promise<void> {
     await this.client.call('DELETE_NOTEBOOK', [[id], [2]]);
