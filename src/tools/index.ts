@@ -3525,6 +3525,43 @@ export class ToolHandlers {
           timeout: 60000,
         });
 
+        // Force GRID view. The id/href scrape (Strategies 1-2) only works in
+        // grid view: after the "Gemini Notebook" rebrand, an account whose
+        // homepage is in LIST view renders a <project-table> with NO
+        // project-{UUID} ids and NO /notebook/<id> hrefs (issue #23 / #21),
+        // so both strategies return 0. Switching to grid first also avoids the
+        // 30s wait below timing out on a populated list-view account.
+        try {
+          // Let the homepage shell hydrate first — the view-toggle group and
+          // notebook cards render a beat after `domcontentloaded`, so checking
+          // immediately would miss the toggle and silently skip the switch.
+          await page
+            .waitForSelector(
+              'mat-button-toggle-group, button:has(mat-icon:has-text("grid_view")), [id^="project-"][id$="-title"]',
+              { timeout: 15000 }
+            )
+            .catch(() => undefined);
+          const inGrid = await page
+            .locator('[id^="project-"][id$="-title"]')
+            .first()
+            .isVisible({ timeout: 1000 })
+            .catch(() => false);
+          if (!inGrid) {
+            const gridToggle = page
+              .locator(
+                'button:has(mat-icon:has-text("grid_view")), mat-button-toggle:has(mat-icon:has-text("grid_view"))'
+              )
+              .first();
+            if (await gridToggle.isVisible({ timeout: 5000 }).catch(() => false)) {
+              log.info('  🔁 Switching homepage to grid view (ids/hrefs only render in grid)...');
+              await gridToggle.click().catch(() => undefined);
+              await randomDelay(1500, 2500);
+            }
+          }
+        } catch {
+          // Best-effort: if grid can't be forced, Strategy 1 will report 0.
+        }
+
         // Wait for the page to fully render and show notebook cards
         // The homepage shows a grid of notebook cards with links
         await sendProgress?.('Waiting for notebooks to load...', 2, 5);
@@ -3654,80 +3691,13 @@ export class ToolHandlers {
           }
         }
 
-        // Strategy 3 (2026-07 "Gemini Notebook" rebrand): the homepage no
-        // longer exposes `project-{UUID}` ids nor /notebook/<id> hrefs at all
-        // — list view renders plain mat-table rows whose only id-bearing
-        // artifact is the URL you land on AFTER clicking. When strategies 1-2
-        // find nothing but titled rows exist, resolve each id by clicking the
-        // row, capturing page.url(), and returning to the homepage. Slow
-        // (~3-4 s per notebook), but listing is a sync operation and the
-        // library caches the result.
-        if (notebooks.length === 0) {
-          const ROW = 'tr.mat-mdc-row';
-          const TITLE = '.project-table-title';
-          // Rows only exist in list view — switch if the account was in grid.
-          if ((await page.locator(ROW).count()) === 0) {
-            const listToggle = page
-              .locator('button:has(mat-icon:has-text("view_headline"))')
-              .first();
-            if (await listToggle.isVisible({ timeout: 1000 }).catch(() => false)) {
-              log.info('  🔁 Strategy 3: switching homepage to list view...');
-              await listToggle.click();
-              await page.waitForSelector(ROW, { timeout: 10000 }).catch(() => undefined);
-            }
-          }
-          const rowCount = await page.locator(ROW).count();
-          if (rowCount > 0) {
-            log.info(`  🔍 Strategy 3: click-through over ${rowCount} list rows...`);
-            const homeUrl = page.url();
-            for (let i = 0; i < rowCount; i++) {
-              try {
-                const row = page.locator(ROW).nth(i);
-                const titleEl = row.locator(TITLE);
-                const name = (
-                  (await titleEl.getAttribute('title').catch(() => null)) ??
-                  (await titleEl.textContent().catch(() => null)) ??
-                  ''
-                ).trim();
-                await row.click();
-                await page.waitForURL(/\/notebook\/[a-f0-9-]{36}/, { timeout: 15000 });
-                const id = page.url().match(/\/notebook\/([a-f0-9-]{36})/)?.[1];
-                if (id && !seenIds.has(id)) {
-                  seenIds.add(id);
-                  notebooks.push({
-                    id,
-                    name,
-                    url: `https://${NOTEBOOK_PRIMARY_HOST}/notebook/${id}`,
-                  });
-                  log.info(
-                    `    📓 Resolved by click-through: ${name || '(untitled)'} (${id.substring(0, 8)}...)`
-                  );
-                }
-                await sendProgress?.(
-                  `Resolving notebooks by click-through (${i + 1}/${rowCount})...`,
-                  4,
-                  5
-                );
-              } catch (err) {
-                log.warning(
-                  `    ⚠️ Strategy 3 row ${i} failed: ${err instanceof Error ? err.message : String(err)}`
-                );
-              }
-              // Return to the homepage table for the next row — deterministic
-              // goto instead of goBack (SPA history can land elsewhere).
-              await page
-                .goto(homeUrl, { waitUntil: 'domcontentloaded', timeout: 30000 })
-                .catch(() => undefined);
-              await page.waitForSelector(ROW, { timeout: 15000 }).catch(() => undefined);
-              await randomDelay(400, 800);
-            }
-            if (notebooks.length < rowCount) {
-              log.warning(
-                `  ⚠️ Strategy 3 resolved ${notebooks.length}/${rowCount} rows — the rest failed above (not silently skipped)`
-              );
-            }
-          }
-        }
+        // No Strategy 3 click-through: forcing grid view above makes the
+        // id/href scrape work directly, so `notebooks.length === 0` here means
+        // the account genuinely owns no notebooks. The old list-view
+        // click-through (resolve each id by clicking the row) was removed — it
+        // was slow (~3-4 s/notebook) and had a correctness bug (#21): opening a
+        // notebook bumps its "Most recent" rank, reordering the table
+        // mid-iteration so nth(i) clicked some rows twice and skipped others.
 
         await sendProgress?.('Done!', 5, 5);
         log.success(`  ✅ Found ${notebooks.length} notebooks`);
@@ -4140,44 +4110,44 @@ export class ToolHandlers {
         let observedName = '';
         if (name) {
           log.info(`  📝 Attempting rename to: ${name}`);
-          // Most-specific selectors first: aria-label or placeholder that
-          // explicitly indicate "title" / "Untitled". Generic contenteditable
-          // is the last resort.
-          const titleSelectors: Array<{ sel: string; via: 'fill' | 'type' }> = [
-            { sel: 'input[aria-label*="title" i]', via: 'fill' },
-            { sel: 'input[aria-label*="titre" i]', via: 'fill' },
-            { sel: 'input[placeholder*="Untitled" i]', via: 'fill' },
-            { sel: 'input[placeholder*="sans titre" i]', via: 'fill' },
-            { sel: '[role="textbox"][aria-label*="title" i]', via: 'type' },
-            { sel: '[contenteditable="true"][aria-label*="title" i]', via: 'type' },
-            // Last-resort generic — only used if the targeted ones fail.
-            { sel: '.notebook-title', via: 'type' },
-          ];
 
-          for (const { sel, via } of titleSelectors) {
+          // The freshly-created notebook lands on `?addSource=true`, which
+          // auto-opens the "Add sources" dialog; its dark CDK backdrop
+          // intercepts pointer events on the title field. Dismiss any overlay
+          // (add-source dialog / onboarding) before renaming (issue #23).
+          for (let i = 0; i < 4; i++) {
+            const backdropShowing = await page
+              .locator('.cdk-overlay-backdrop-showing')
+              .first()
+              .isVisible({ timeout: 500 })
+              .catch(() => false);
+            if (!backdropShowing) break;
+            await page.keyboard.press('Escape').catch(() => {});
+            await randomDelay(500, 900);
+          }
+
+          // After the "Gemini Notebook" rebrand the title is an <input> inside
+          // an <editable-project-title> custom element:
+          //   <editable-project-title><div class="title">
+          //     <div class="title-label"><span class="title-label-inner">Notebook sans titre</span></div>
+          //     <input class="title-input …">
+          // The old selectors (aria-label*="title", placeholder*="Untitled", …)
+          // no longer match — the input has neither aria-label nor placeholder.
+          const titleSelectors = ['editable-project-title input.title-input', 'input.title-input'];
+
+          for (const sel of titleSelectors) {
             try {
               const el = page.locator(sel).first();
               if (!(await el.isVisible({ timeout: 1500 }).catch(() => false))) continue;
 
-              if (via === 'fill') {
-                await el.click();
-                await el.fill(name);
-              } else {
-                await el.click();
-                await el.evaluate((node: unknown) => {
-                  const n = node as { textContent: string };
-                  n.textContent = '';
-                });
-                await page.keyboard.type(name, { delay: 30 });
-              }
-              await page.keyboard.press('Tab'); // commit the edit
+              await el.click();
+              await page.keyboard.press('ControlOrMeta+A').catch(() => {});
+              await el.fill(name);
+              await page.keyboard.press('Enter'); // commit the edit
               await randomDelay(800, 1300);
 
-              // Verify by reading what's actually in the title element now.
-              const value =
-                (await el.inputValue().catch(() => null)) ??
-                (await el.textContent().catch(() => null)) ??
-                '';
+              // Verify by reading what's actually in the title input now.
+              const value = (await el.inputValue().catch(() => null)) ?? '';
               observedName = value.trim();
               if (observedName === name.trim()) {
                 log.success(`  ✅ Notebook renamed to: ${name} (selector: ${sel})`);
