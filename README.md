@@ -229,10 +229,12 @@ MIT — Use freely in your projects. See [LICENSE](./LICENSE).
 Thanks to everyone who has contributed code, ideas, and bug reports:
 
 - **Gérôme Dexheimer** — [@PleasePrompto](https://github.com/PleasePrompto), author of the upstream [`notebooklm-mcp`](https://github.com/PleasePrompto/notebooklm-mcp) this project builds on
+- **Khizar Jamshaid Iqbal** — [@KhizarJamshaidIqbal](https://github.com/KhizarJamshaidIqbal), 2025 UI selector fixes, doctor script, PII scrub
+- **Kazik Pietka** — [@kpietkaa](https://github.com/kpietkaa), `notebook.google.com` rebrand support
+- **Rui Ruiberriz** — [@Excauboi](https://github.com/Excauboi), `hl=<uiLocale>` on app URLs + click-through scrape fallback
+- **[@he0xwhale](https://github.com/he0xwhale)** — `note_list` / `note_get` MCP tools
+- **[@eminsnow](https://github.com/eminsnow)** — canonical tool names (`_` over `.`)
 - **Julien Cantoni** — [@JulienCANTONI](https://github.com/JulienCANTONI)
-- **Khizar Jamshaid Iqbal** — [@KhizarJamshaidIqbal](https://github.com/KhizarJamshaidIqbal)
-
-The v3.0.0 dual-transport refactor was inspired by **Jacob B. D.**'s [`gemini-notebook-mcp-cli`](https://github.com/jacob-bd/gemini-notebook-mcp-cli), which showed that driving NotebookLM's internal `batchexecute` RPC API is far more robust than scraping the DOM. This project's RPC layer is an independent TypeScript reimplementation.
 
 ---
 
