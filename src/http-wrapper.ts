@@ -669,6 +669,18 @@ app.put('/notebooks/:id/share', async (req: Request, res: Response) => {
   }
 });
 
+// Generate a study aid (flashcards/quiz) — RPC extension. Body: { notebook_url, kind, focus }
+app.post('/content/study-aid', async (req: Request, res: Response) => {
+  try {
+    const { notebook_url, notebook_id, kind, focus } = req.body || {};
+    res.json(await toolHandlers.handleGenerateStudyAid({ notebook_url, notebook_id, kind, focus }));
+  } catch (error) {
+    res
+      .status(500)
+      .json({ success: false, error: error instanceof Error ? error.message : String(error) });
+  }
+});
+
 // List sessions
 app.get('/sessions', async (_req: Request, res: Response) => {
   try {

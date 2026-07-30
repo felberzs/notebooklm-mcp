@@ -1558,6 +1558,29 @@ User: "Yes" → call remove_notebook`,
         },
       },
     },
+    {
+      name: 'generate_study_aid',
+      description:
+        'Generate a study aid from a notebook’s sources: flashcards or a quiz. ' +
+        'RPC-backed (no browser). Returns when generation completes.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          kind: {
+            type: 'string',
+            enum: ['flashcards', 'quiz'],
+            description: 'Which study aid to generate.',
+          },
+          notebook_url: { type: 'string', description: 'NotebookLM notebook URL.' },
+          notebook_id: {
+            type: 'string',
+            description: 'Notebook UUID (alternative to notebook_url).',
+          },
+          focus: { type: 'string', description: 'Optional focus prompt to steer the content.' },
+        },
+        required: ['kind'],
+      },
+    },
   ];
 
   // Rename to canonical (v2) names and attach the shared output
@@ -3814,6 +3837,49 @@ export class ToolHandlers {
     } catch (error) {
       const msg = error instanceof Error ? error.message : String(error);
       log.error(`❌ [TOOL] notebook_sharing failed: ${msg}`);
+      return { success: false, error: msg };
+    }
+  }
+
+  /**
+   * Generate a study aid (flashcards or quiz) — RPC-only extension (a Studio
+   * type the DOM tool never exposed). Create + poll until ready.
+   */
+  async handleGenerateStudyAid(args: {
+    notebook_url?: string;
+    notebook_id?: string;
+    kind: 'flashcards' | 'quiz';
+    focus?: string;
+  }): Promise<ToolResult<{ status: string; title?: string; artifactId?: string }>> {
+    log.info(`🔧 [TOOL] generate_study_aid (${args.kind}) called`);
+    try {
+      const url =
+        args.notebook_url ||
+        (args.notebook_id
+          ? `https://${NOTEBOOK_PRIMARY_HOST}/notebook/${args.notebook_id}`
+          : this.library.getActiveNotebook()?.url);
+      const notebookId = url ? this.notebookIdFromUrl(url) : args.notebook_id || null;
+      if (!notebookId) return { success: false, error: 'No notebook specified' };
+      if (args.kind !== 'flashcards' && args.kind !== 'quiz') {
+        return { success: false, error: `kind must be 'flashcards' or 'quiz'` };
+      }
+      const client = await this.getRpcClient();
+      const sourceIds = await new NotebookRpc(client).getSourceIds(notebookId);
+      if (!sourceIds.length) return { success: false, error: 'notebook has no sources' };
+      const res = await new StudioRpc(client).generate(notebookId, args.kind, sourceIds, {
+        language: CONFIG.uiLocale,
+        focus: args.focus || '',
+      });
+      const ok = res.status === 'completed';
+      log.success(`  ✅ (RPC) generate ${args.kind}: ${res.status}`);
+      return {
+        success: ok,
+        data: { status: res.status, title: res.title, artifactId: res.artifactId ?? undefined },
+        error: ok ? undefined : `Generation ${res.status}`,
+      };
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error);
+      log.error(`❌ [TOOL] generate_study_aid failed: ${msg}`);
       return { success: false, error: msg };
     }
   }

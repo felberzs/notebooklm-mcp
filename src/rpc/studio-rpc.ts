@@ -15,7 +15,9 @@ export type StudioType =
   | 'video'
   | 'infographic'
   | 'presentation'
-  | 'data_table';
+  | 'data_table'
+  | 'flashcards'
+  | 'quiz';
 
 // type code + the `content`-array index its options blob sits at.
 const TYPE_META: Record<StudioType, { code: number; optionIndex: number }> = {
@@ -25,6 +27,8 @@ const TYPE_META: Record<StudioType, { code: number; optionIndex: number }> = {
   infographic: { code: 7, optionIndex: 14 },
   presentation: { code: 8, optionIndex: 16 }, // slide deck
   data_table: { code: 9, optionIndex: 18 },
+  flashcards: { code: 4, optionIndex: 9 }, // type 4, subtype 1 in options
+  quiz: { code: 4, optionIndex: 9 }, // type 4, subtype 2 in options
 };
 
 export interface StudioArtifact {
@@ -96,6 +100,12 @@ export class StudioRpc {
       case 'data_table':
         // [null, [description, lang]]
         return [null, [focus || '', lang]];
+      case 'flashcards':
+        // [null, [subtype=1, null, focus, null,null,null, [difficulty=2, count]]]
+        return [null, [1, null, focus || null, null, null, null, [2, 2]]];
+      case 'quiz':
+        // [null, [subtype=2, null, focus, null,null,null,null, [count, difficulty=2]]]
+        return [null, [2, null, focus || null, null, null, null, null, [2, 2]]];
     }
   }
 

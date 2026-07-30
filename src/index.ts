@@ -650,6 +650,17 @@ class NotebookLMMCPServer {
             );
             break;
 
+          case 'generate_study_aid':
+            result = await this.toolHandlers.handleGenerateStudyAid(
+              args as {
+                notebook_url?: string;
+                notebook_id?: string;
+                kind: 'flashcards' | 'quiz';
+                focus?: string;
+              }
+            );
+            break;
+
           default:
             log.error(`❌ [MCP] Unknown tool: ${name}`);
             return {
