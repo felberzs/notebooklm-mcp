@@ -7,6 +7,43 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [2.3.0] - 2026-07-30
+
+### Fixed — the "Gemini Notebook" rebrand rebuilt the whole UI; create / list / rename / delete / sources / Studio all repaired (#23, #21)
+
+Google's rebrand of NotebookLM to "Gemini Notebook" rebuilt the homepage and
+Studio DOM, breaking most browser operations. All of the following were
+diagnosed and re-verified end-to-end against a live authenticated account:
+
+- **`create_notebook`** — the SPA polls the network forever, so
+  `waitUntil: 'networkidle'` never fired (30 s hang). Switched to
+  `domcontentloaded`; also dismiss the first-run onboarding overlay.
+- **rename in `create_notebook`** — the title is now
+  `input.title-input` inside `<editable-project-title>` (no aria-label /
+  placeholder), and the auto-opened add-source dialog blocked it. Dismiss the
+  overlay, then fill the input. Verified the name persists.
+- **`list_notebooks`** — `project-{UUID}` ids and `/notebook/<id>` hrefs only
+  render in **grid view**; a list-view account returned 0 on a non-empty
+  account. Force grid view before scraping (removes the slow list-view
+  click-through and its recency-resort race, #21).
+- **`delete_notebooks`** — the tile walk overshot to a shared container and
+  deleted the **wrong** notebook while mis-reporting it. Target the enclosing
+  `<project-button>` tile, scope the confirm to the dialog, and **verify the id
+  is gone before reporting success** (data-loss safety).
+- **`add_source` (URL)** — false "upload failed" for URL sources that fetch
+  server-side (20-40 s); the check waited ~5 s. Now polls up to 60 s.
+- **`generate_content` (Studio)** — Studio became a grid of generation cards.
+  Trigger by the card's language-independent mat-icon (forced past a hover
+  tooltip), handle the per-type preset / customization dialog, and detect
+  completion via a new `<artifact-library-item>`. All six types verified:
+  audio, report, data table, presentation, infographic, video.
+- **`list_content` / `download_content`** — rewritten on the `artifact-library`
+  model; download opens the artifact's ⋮ menu → "Télécharger" (NotebookLM now
+  serves audio as `.m4a`).
+
+Also extends `NOTEBOOKLM_UI_LOCALE` to fr / en / de / ja. Thanks to
+@Excauboi (#21) and @KolinEchout (#23) for the reports.
+
 ## [2.2.1] - 2026-07-25
 
 ### Fixed — Workspace accounts whose app lives on `notebook.google.com` were not recognized (#19)
