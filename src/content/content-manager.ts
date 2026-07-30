@@ -9,7 +9,7 @@
  * Uses Playwright to interact with NotebookLM's web interface.
  */
 
-import type { Page, Locator, ElementHandle } from 'patchright';
+import type { Page, ElementHandle } from 'patchright';
 import path from 'path';
 import { existsSync } from 'fs';
 import { randomDelay, realisticClick } from '../utils/stealth-utils.js';
@@ -2866,21 +2866,48 @@ export class ContentManager {
     const content: GeneratedContent[] = [];
 
     try {
-      // Check for audio overview
-      const audioPlayer = await this.page.$('audio, .audio-player');
-      if (audioPlayer) {
+      // Post "Gemini Notebook" rebrand: every generated artifact renders as an
+      // `<artifact-library-item>` in the Studio `<artifact-library>`, with a
+      // title (`.artifact-title`), a details line (`.artifact-details`) and a
+      // type icon (mat-icon ligature). The old `audio, .audio-player` probe
+      // only ever saw audio and is invalid now. Studio must be the active tab.
+      await this.navigateToStudio().catch(() => undefined);
+      await randomDelay(1000, 1800);
+
+      type RawArtifact = { index: number; title: string; type: string; generating: boolean };
+      const items = (await this.page.evaluate(`
+        (() => {
+          const ICON_TO_TYPE = {
+            audio_magic_eraser: 'audio_overview',
+            subscriptions: 'video',
+            tablet: 'presentation',
+            auto_tab_group: 'report',
+            stacked_bar_chart: 'infographic',
+            table_view: 'data_table',
+          };
+          const out = [];
+          document.querySelectorAll('artifact-library artifact-library-item').forEach((el, i) => {
+            const title = (el.querySelector('.artifact-title')?.textContent || '').trim();
+            const details = (el.querySelector('.artifact-details')?.textContent || '').replace(/\\s+/g, ' ').trim();
+            const icon = (el.querySelector('mat-icon.artifact-icon')?.textContent || '').trim();
+            const type = ICON_TO_TYPE[icon] || '';
+            const generating = !details || /création|génération|creating|generating/i.test(title);
+            out.push({ index: i, title, type, generating });
+          });
+          return out;
+        })()
+      `)) as RawArtifact[];
+
+      for (const it of items) {
+        if (it.generating || !it.type) continue; // skip in-progress / unsupported types
         content.push({
-          id: 'audio-overview',
-          type: 'audio_overview',
-          name: 'Audio Overview',
+          id: `artifact-${it.index}`,
+          type: it.type as ContentType,
+          name: it.title || it.type,
           status: 'ready',
           createdAt: new Date().toISOString(),
         });
       }
-
-      // Note: We only list audio_overview content now since other content types
-      // (briefing_doc, study_guide, etc.) were removed as they were fake implementations.
-      // Any notes in the Studio panel would have been created by the user directly in NotebookLM.
     } catch (error) {
       log.warning(`  ⚠️ Could not list generated content: ${error}`);
     }
@@ -2909,16 +2936,7 @@ export class ContentManager {
   ): Promise<ContentDownloadResult> {
     log.info(`📥 Downloading ${contentType}...`);
 
-    // Handle Google export types (presentation -> Google Slides, data_table -> Google Sheets)
-    if (contentType === 'presentation') {
-      return await this.exportPresentationToGoogleSlides();
-    }
-
-    if (contentType === 'data_table') {
-      return await this.exportDataTableToGoogleSheets();
-    }
-
-    // Report is truly text-based with no export option
+    // Report is text-based and returned in the generation response.
     if (contentType === 'report') {
       return {
         success: false,
@@ -2926,39 +2944,62 @@ export class ContentManager {
       };
     }
 
-    try {
-      // Navigate to the appropriate content panel
-      const panelConfig = this.getContentPanelConfig(contentType);
-      await this.navigateToContentPanel(panelConfig);
+    // Post "Gemini Notebook" rebrand: every generated artifact exposes a ⋮
+    // action menu with a "Télécharger"/"Download" item (icon `save_alt`).
+    // Locate the artifact by its type icon, open the menu, click download.
+    const ICON_BY_TYPE: Partial<Record<ContentType, string>> = {
+      audio_overview: 'audio_magic_eraser',
+      video: 'subscriptions',
+      presentation: 'tablet',
+      infographic: 'stacked_bar_chart',
+      data_table: 'table_view',
+    };
+    const icon = ICON_BY_TYPE[contentType];
+    if (!icon) {
+      return { success: false, error: `Unsupported content type for download: ${contentType}` };
+    }
 
-      // Find and click download button
-      const downloadBtn = await this.findDownloadButton();
-      if (!downloadBtn) {
-        // For audio, try to get source URL directly
-        if (contentType === 'audio_overview') {
-          const audioSrc = await this.getAudioSourceUrl();
-          if (audioSrc) {
-            return { success: true, filePath: audioSrc, mimeType: 'audio/wav' };
-          }
-        }
-        throw new Error('Download button not found');
+    try {
+      await this.navigateToStudio();
+      await randomDelay(1000, 1800);
+
+      const menuOpened = await this.openArtifactMenuByIcon(icon);
+      if (!menuOpened) {
+        return {
+          success: false,
+          error: `No ${contentType} artifact found in Studio to download — generate it first.`,
+        };
       }
 
-      // Set up download handling and click
-      const downloadPromise = this.page.waitForEvent('download', { timeout: 60000 });
-      await downloadBtn.click();
+      const downloadItem = this.page
+        .locator(
+          '[role="menuitem"]:has(mat-icon:has-text("save_alt")), .mat-mdc-menu-item:has(mat-icon:has-text("save_alt")), [role="menuitem"]:has-text("Télécharger"), [role="menuitem"]:has-text("Download")'
+        )
+        .first();
+      if (!(await downloadItem.isVisible({ timeout: 3000 }).catch(() => false))) {
+        await this.page.keyboard.press('Escape').catch(() => undefined);
+        return {
+          success: false,
+          error: `Download option not available for ${contentType} (menu has no "Télécharger"/"Download").`,
+        };
+      }
+
+      const downloadPromise = this.page.waitForEvent('download', { timeout: 90000 });
+      await downloadItem.click({ force: true }).catch(() => undefined);
       const download = await downloadPromise;
 
-      // Save the file
       const suggestedName = download.suggestedFilename();
       const savePath = outputPath || path.join(CONFIG.dataDir, suggestedName);
       await download.saveAs(savePath);
 
-      // Determine MIME type
-      const mimeTypes: Record<string, string> = {
-        audio_overview: 'audio/wav',
+      // Prefer the real extension from the downloaded filename; the map is a
+      // fallback. NotebookLM now serves audio as .m4a (audio/mp4), not .wav.
+      const mimeTypes: Partial<Record<ContentType, string>> = {
+        audio_overview: 'audio/mp4',
         video: 'video/mp4',
         infographic: 'image/png',
+        presentation: 'application/pdf',
+        data_table: 'text/csv',
       };
 
       log.success(`  ✅ ${contentType} downloaded: ${savePath}`);
@@ -2974,530 +3015,35 @@ export class ContentManager {
   }
 
   /**
-   * Get panel configuration for a content type
+   * Find the Studio artifact whose type icon matches `iconLigature`, mark it,
+   * and open its ⋮ action menu. Returns false if no matching artifact exists.
    */
-  private getContentPanelConfig(contentType: ContentType): {
-    tabSelectors: string[];
-    cardSelectors: string[];
-  } {
-    const configs: Record<string, { tabSelectors: string[]; cardSelectors: string[] }> = {
-      audio_overview: {
-        tabSelectors: [
-          '[role="tab"]:has-text("Audio Overview")',
-          '[role="tab"]:has-text("Audio")',
-          'button:has-text("Audio Overview")',
-          '[aria-label*="Audio"]',
-        ],
-        cardSelectors: [
-          '.audio-overview-card',
-          '[data-type="audio"]',
-          'button:has-text("Deep Dive")',
-        ],
-      },
-      video: {
-        tabSelectors: [
-          '[role="tab"]:has-text("Video")',
-          'button:has-text("Video")',
-          '[aria-label*="Video"]',
-        ],
-        cardSelectors: ['.video-card', '[data-type="video"]', 'video'],
-      },
-      infographic: {
-        tabSelectors: [
-          '[role="tab"]:has-text("Infographic")',
-          'button:has-text("Infographic")',
-          '[aria-label*="Infographic"]',
-        ],
-        cardSelectors: [
-          '.infographic-card',
-          '[data-type="infographic"]',
-          'img[class*="infographic"]',
-        ],
-      },
-      presentation: {
-        tabSelectors: [
-          '[role="tab"]:has-text("Presentation")',
-          '[role="tab"]:has-text("Slides")',
-          '[role="tab"]:has-text("Diaporama")',
-          'button:has-text("Presentation")',
-          'button:has-text("Slides")',
-          '[aria-label*="Presentation"]',
-          '[aria-label*="Slides"]',
-        ],
-        cardSelectors: [
-          '.presentation-card',
-          '.slides-card',
-          '[data-type="presentation"]',
-          '[data-type="slides"]',
-        ],
-      },
-      data_table: {
-        tabSelectors: [
-          '[role="tab"]:has-text("Data Table")',
-          '[role="tab"]:has-text("Table")',
-          '[role="tab"]:has-text("Tableau")',
-          'button:has-text("Data Table")',
-          'button:has-text("Table")',
-          '[aria-label*="Table"]',
-          '[aria-label*="Data"]',
-        ],
-        cardSelectors: [
-          '.data-table-card',
-          '.table-card',
-          '[data-type="data_table"]',
-          '[data-type="table"]',
-        ],
-      },
-    };
-    return configs[contentType] || { tabSelectors: [], cardSelectors: [] };
-  }
-
-  /**
-   * Navigate to content panel
-   */
-  private async navigateToContentPanel(config: {
-    tabSelectors: string[];
-    cardSelectors: string[];
-  }): Promise<void> {
-    // Try to click tab
-    for (const selector of config.tabSelectors) {
-      try {
-        const tab = this.page.locator(selector).first();
-        if (await tab.isVisible({ timeout: 500 })) {
-          await tab.click();
-          await randomDelay(500, 1000);
-          break;
-        }
-      } catch {
-        continue;
-      }
-    }
-
-    // Try to click card
-    for (const selector of config.cardSelectors) {
-      try {
-        const card = this.page.locator(selector).first();
-        if (await card.isVisible({ timeout: 500 })) {
-          await card.click();
-          await randomDelay(500, 1000);
-          break;
-        }
-      } catch {
-        continue;
-      }
-    }
-  }
-
-  /**
-   * Find download button on the page
-   */
-  private async findDownloadButton(): Promise<Locator | null> {
-    const downloadSelectors = [
-      'button:has(mat-icon:has-text("download"))',
-      'button:has(mat-icon:has-text("file_download"))',
-      'button:has(mat-icon:has-text("get_app"))',
-      'button[aria-label*="Download"]',
-      'button[aria-label*="Télécharger"]',
-      'button[aria-label*="download"]',
-      // Text-based patterns (bilingual via i18n)
-      ...i18nSelectors('button:has-text("{text}")', 'buttons', 'download'),
-      'a[download]',
-      '.download-button',
-      '[data-action="download"]',
-    ];
-
-    for (const selector of downloadSelectors) {
-      try {
-        const btn = this.page.locator(selector).first();
-        if (await btn.isVisible({ timeout: 500 })) {
-          log.info(`  ✅ Found download button: ${selector}`);
-          return btn;
-        }
-      } catch {
-        continue;
-      }
-    }
-    return null;
-  }
-
-  /**
-   * Get audio source URL directly from audio element
-   */
-  private async getAudioSourceUrl(): Promise<string | null> {
-    try {
-      const audioEl = await this.page.$('audio');
-      if (audioEl) {
-        const src = await audioEl.getAttribute('src');
-        if (src) {
-          log.info(`  ✅ Audio source URL found: ${src}`);
-          return src;
-        }
-      }
-    } catch {
-      /* ignore */
-    }
-    return null;
-  }
-
-  /**
-   * Download audio content
-   * @deprecated Use downloadContent('audio_overview', outputPath) instead
-   */
-  async downloadAudio(outputPath?: string): Promise<ContentDownloadResult> {
-    log.info(`📥 Downloading audio...`);
-
-    try {
-      // First, navigate to the Audio Overview panel/tab
-      log.info(`  📑 Looking for Audio Overview panel...`);
-      const audioTabSelectors = [
-        '[role="tab"]:has-text("Audio Overview")',
-        '[role="tab"]:has-text("Audio")',
-        'button:has-text("Audio Overview")',
-        'button:has-text("Audio")',
-        '[aria-label*="Audio"]',
-      ];
-
-      for (const selector of audioTabSelectors) {
-        try {
-          const tab = this.page.locator(selector).first();
-          if (await tab.isVisible({ timeout: 500 })) {
-            log.info(`  ✅ Found Audio tab: ${selector}`);
-            await tab.click();
-            await randomDelay(500, 1000);
-            break;
-          }
-        } catch {
-          continue;
-        }
-      }
-
-      // Look for Audio Overview card/section and click it if needed
-      const audioCardSelectors = [
-        '.audio-overview-card',
-        '[data-type="audio"]',
-        'button:has-text("Deep Dive")',
-        'button:has-text("Conversation")',
-      ];
-
-      for (const selector of audioCardSelectors) {
-        try {
-          const card = this.page.locator(selector).first();
-          if (await card.isVisible({ timeout: 500 })) {
-            log.info(`  ✅ Found Audio card: ${selector}`);
-            await card.click();
-            await randomDelay(500, 1000);
-            break;
-          }
-        } catch {
-          continue;
-        }
-      }
-
-      // First try to open a menu (NotebookLM often has download in a three-dot menu)
-      const menuTriggerSelectors = [
-        'button:has(mat-icon:has-text("more_vert"))',
-        'button:has(mat-icon:has-text("more_horiz"))',
-        'button[aria-label*="More"]',
-        'button[aria-label*="Options"]',
-        'button[aria-label*="Menu"]',
-        'button[aria-label*="plus"]',
-        '.mat-mdc-menu-trigger',
-        '[aria-haspopup="menu"]',
-      ];
-
-      for (const menuSelector of menuTriggerSelectors) {
-        try {
-          const menuBtn = this.page.locator(menuSelector).first();
-          if (await menuBtn.isVisible({ timeout: 300 })) {
-            log.info(`  🔍 Opening menu: ${menuSelector}`);
-            await menuBtn.click();
-            await randomDelay(300, 500);
-            break;
-          }
-        } catch {
-          continue;
-        }
-      }
-
-      // Find download button (either direct or in menu) - bilingual via i18n
-      const downloadSelectors = [
-        // Menu item patterns (if menu was opened)
-        ...i18nSelectors('[role="menuitem"]:has-text("{text}")', 'buttons', 'download'),
-        ...i18nSelectors('mat-menu-item:has-text("{text}")', 'buttons', 'download'),
-        '.mat-mdc-menu-item:has-text("Download")',
-        // Material Design icon buttons
-        'button:has(mat-icon:has-text("download"))',
-        'button:has(mat-icon:has-text("file_download"))',
-        'button:has(mat-icon:has-text("get_app"))',
-        // Aria labels
-        'button[aria-label*="Download"]',
-        'button[aria-label*="Télécharger"]',
-        'button[aria-label*="download"]',
-        // Text patterns (bilingual via i18n)
-        ...i18nSelectors('button:has-text("{text}")', 'buttons', 'download'),
-        // Icon buttons near audio
-        '.audio-controls button:has(mat-icon)',
-        '.audio-player button:has(mat-icon)',
-        // Generic download patterns
-        'a[download]',
-        '.download-button',
-        '[data-action="download"]',
-      ];
-
-      let downloadBtn = null;
-      for (const selector of downloadSelectors) {
-        try {
-          const btn = this.page.locator(selector).first();
-          if (await btn.isVisible({ timeout: 500 })) {
-            downloadBtn = btn;
-            log.info(`  ✅ Found download button: ${selector}`);
-            break;
-          }
-        } catch {
-          continue;
-        }
-      }
-
-      if (!downloadBtn) {
-        // Try to get audio source directly from audio element
-        log.info(`  🔍 No download button, looking for audio element...`);
-        const audioEl = await this.page.$('audio');
-        if (audioEl) {
-          const src = await audioEl.getAttribute('src');
-          if (src) {
-            log.info(`  ✅ Audio source URL found: ${src}`);
-            return {
-              success: true,
-              filePath: src,
-              mimeType: 'audio/wav',
-            };
+  private async openArtifactMenuByIcon(iconLigature: string): Promise<boolean> {
+    const marked = await this.page.evaluate(`
+      (() => {
+        document.querySelectorAll('[data-nblm-dl-target]').forEach(n => n.removeAttribute('data-nblm-dl-target'));
+        const items = document.querySelectorAll('artifact-library artifact-library-item');
+        for (const el of items) {
+          const ic = (el.querySelector('mat-icon.artifact-icon')?.textContent || '').trim();
+          if (ic === ${JSON.stringify(iconLigature)}) {
+            el.setAttribute('data-nblm-dl-target', '1');
+            return true;
           }
         }
-
-        // Debug: list all buttons in the panel
-        log.warning(`  ⚠️ Download button not found, listing panel buttons...`);
-        try {
-          const buttons = await this.page.locator('button').all();
-          for (let i = 0; i < Math.min(buttons.length, 10); i++) {
-            const text = await buttons[i].textContent();
-            const aria = await buttons[i].getAttribute('aria-label');
-            log.info(`  🔍 Button[${i}]: text="${text?.trim()}", aria="${aria}"`);
-          }
-        } catch {
-          /* ignore */
-        }
-
-        throw new Error('Download button not found');
-      }
-
-      // Set up download handling
-      const downloadPromise = this.page.waitForEvent('download', { timeout: 30000 });
-
-      await downloadBtn.click();
-
-      const download = await downloadPromise;
-      const suggestedName = download.suggestedFilename();
-
-      const savePath = outputPath || path.join(CONFIG.dataDir, suggestedName);
-      await download.saveAs(savePath);
-
-      log.success(`  ✅ Audio downloaded: ${savePath}`);
-
-      return {
-        success: true,
-        filePath: savePath,
-        mimeType: 'audio/wav',
-      };
-    } catch (error) {
-      const errorMsg = error instanceof Error ? error.message : String(error);
-      return { success: false, error: `Download failed: ${errorMsg}` };
-    }
-  }
-
-  /**
-   * Export presentation to Google Slides
-   * Finds and clicks the "Open in Slides" button to get the Google Slides URL
-   */
-  private async exportPresentationToGoogleSlides(): Promise<ContentDownloadResult> {
-    log.info(`  📤 Exporting presentation to Google Slides...`);
-
-    try {
-      // Navigate to presentation panel
-      const panelConfig = this.getContentPanelConfig('presentation');
-      await this.navigateToContentPanel(panelConfig);
-
-      // Look for "Open in Slides" or similar export button
-      const exportSelectors = [
-        'button:has-text("Open in Slides")',
-        'button:has-text("Ouvrir dans Slides")',
-        'button:has-text("Export to Slides")',
-        'button:has-text("Google Slides")',
-        'a[href*="docs.google.com/presentation"]',
-        'button[aria-label*="Slides"]',
-        'button[aria-label*="slides"]',
-        'button:has(mat-icon:has-text("slideshow"))',
-        // Also look for download as PDF option
-        'button:has-text("Download PDF")',
-        'button:has-text("Télécharger PDF")',
-      ];
-
-      for (const selector of exportSelectors) {
-        try {
-          const btn = this.page.locator(selector).first();
-          if (await btn.isVisible({ timeout: 1000 })) {
-            log.info(`  ✅ Found export button: ${selector}`);
-
-            // Check if it's a direct link
-            const href = await btn.getAttribute('href');
-            if (href && href.includes('docs.google.com/presentation')) {
-              log.success(`  ✅ Google Slides URL found: ${href}`);
-              return {
-                success: true,
-                googleSlidesUrl: href,
-                mimeType: 'application/vnd.google-apps.presentation',
-              };
-            }
-
-            // Click the button and wait for navigation or new tab
-            const [newPage] = await Promise.all([
-              this.page
-                .context()
-                .waitForEvent('page', { timeout: 10000 })
-                .catch(() => null),
-              btn.click(),
-            ]);
-
-            if (newPage) {
-              const newUrl = newPage.url();
-              await newPage.close();
-              if (newUrl.includes('docs.google.com/presentation')) {
-                log.success(`  ✅ Google Slides URL: ${newUrl}`);
-                return {
-                  success: true,
-                  googleSlidesUrl: newUrl,
-                  mimeType: 'application/vnd.google-apps.presentation',
-                };
-              }
-            }
-
-            // Check current page URL
-            await randomDelay(2000, 3000);
-            const currentUrl = this.page.url();
-            if (currentUrl.includes('docs.google.com/presentation')) {
-              log.success(`  ✅ Navigated to Google Slides: ${currentUrl}`);
-              return {
-                success: true,
-                googleSlidesUrl: currentUrl,
-                mimeType: 'application/vnd.google-apps.presentation',
-              };
-            }
-          }
-        } catch {
-          continue;
-        }
-      }
-
-      return {
-        success: false,
-        error:
-          'Could not find Google Slides export button. The presentation may not be ready or the export feature is not available.',
-      };
-    } catch (error) {
-      const errorMsg = error instanceof Error ? error.message : String(error);
-      return { success: false, error: `Export to Google Slides failed: ${errorMsg}` };
-    }
-  }
-
-  /**
-   * Export data table to Google Sheets
-   * Finds and clicks the "Open in Sheets" button to get the Google Sheets URL
-   */
-  private async exportDataTableToGoogleSheets(): Promise<ContentDownloadResult> {
-    log.info(`  📤 Exporting data table to Google Sheets...`);
-
-    try {
-      // Navigate to data table panel
-      const panelConfig = this.getContentPanelConfig('data_table');
-      await this.navigateToContentPanel(panelConfig);
-
-      // Look for "Open in Sheets" or similar export button
-      const exportSelectors = [
-        'button:has-text("Open in Sheets")',
-        'button:has-text("Ouvrir dans Sheets")',
-        'button:has-text("Export to Sheets")',
-        'button:has-text("Google Sheets")',
-        'a[href*="docs.google.com/spreadsheets"]',
-        'button[aria-label*="Sheets"]',
-        'button[aria-label*="sheets"]',
-        'button:has(mat-icon:has-text("table_chart"))',
-        'button:has(mat-icon:has-text("grid_on"))',
-      ];
-
-      for (const selector of exportSelectors) {
-        try {
-          const btn = this.page.locator(selector).first();
-          if (await btn.isVisible({ timeout: 1000 })) {
-            log.info(`  ✅ Found export button: ${selector}`);
-
-            // Check if it's a direct link
-            const href = await btn.getAttribute('href');
-            if (href && href.includes('docs.google.com/spreadsheets')) {
-              log.success(`  ✅ Google Sheets URL found: ${href}`);
-              return {
-                success: true,
-                googleSheetsUrl: href,
-                mimeType: 'application/vnd.google-apps.spreadsheet',
-              };
-            }
-
-            // Click the button and wait for navigation or new tab
-            const [newPage] = await Promise.all([
-              this.page
-                .context()
-                .waitForEvent('page', { timeout: 10000 })
-                .catch(() => null),
-              btn.click(),
-            ]);
-
-            if (newPage) {
-              const newUrl = newPage.url();
-              await newPage.close();
-              if (newUrl.includes('docs.google.com/spreadsheets')) {
-                log.success(`  ✅ Google Sheets URL: ${newUrl}`);
-                return {
-                  success: true,
-                  googleSheetsUrl: newUrl,
-                  mimeType: 'application/vnd.google-apps.spreadsheet',
-                };
-              }
-            }
-
-            // Check current page URL
-            await randomDelay(2000, 3000);
-            const currentUrl = this.page.url();
-            if (currentUrl.includes('docs.google.com/spreadsheets')) {
-              log.success(`  ✅ Navigated to Google Sheets: ${currentUrl}`);
-              return {
-                success: true,
-                googleSheetsUrl: currentUrl,
-                mimeType: 'application/vnd.google-apps.spreadsheet',
-              };
-            }
-          }
-        } catch {
-          continue;
-        }
-      }
-
-      return {
-        success: false,
-        error:
-          'Could not find Google Sheets export button. The data table may not be ready or the export feature is not available.',
-      };
-    } catch (error) {
-      const errorMsg = error instanceof Error ? error.message : String(error);
-      return { success: false, error: `Export to Google Sheets failed: ${errorMsg}` };
-    }
+        return false;
+      })()
+    `);
+    if (!marked) return false;
+    const moreBtn = this.page
+      .locator(
+        '[data-nblm-dl-target="1"] button.artifact-more-button, [data-nblm-dl-target="1"] button.mat-mdc-menu-trigger'
+      )
+      .first();
+    if (!(await moreBtn.isVisible({ timeout: 3000 }).catch(() => false))) return false;
+    await this.page.mouse.move(0, 0).catch(() => undefined);
+    await moreBtn.click({ force: true, timeout: 8000 }).catch(() => undefined);
+    await randomDelay(800, 1300);
+    return true;
   }
 
   // ============================================================================

@@ -649,7 +649,7 @@ export const CONTENT_CONFIGS: Record<ContentType, ContentTypeConfig> = {
       detailed_slideshow: 'DETAILED SLIDESHOW with full visual slides',
       presenter_notes: 'PRESENTER NOTES style slides with speaker notes',
     },
-    waitTimeout: 300000, // 5 minutes
+    waitTimeout: 600000, // 10 minutes (slide generation is slow — verified >5min live)
     isMedia: true, // Can be exported to Google Slides/PDF
     mimeType: 'application/pdf', // Primary download format
     supportsCustomInstructions: true,

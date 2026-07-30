@@ -244,7 +244,7 @@ describe('ContentManager', () => {
     it('should attempt audio download', async () => {
       const manager = new ContentManager(mockPage);
 
-      const result = await manager.downloadAudio();
+      const result = await manager.downloadContent('audio_overview');
 
       // Result depends on actual audio availability
       expect(result).toBeDefined();
