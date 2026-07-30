@@ -681,6 +681,20 @@ app.post('/content/study-aid', async (req: Request, res: Response) => {
   }
 });
 
+// Discover web sources — RPC extension. Body: { notebook_url, query, import }
+app.post('/content/research', async (req: Request, res: Response) => {
+  try {
+    const { notebook_url, notebook_id, query, import: imp } = req.body || {};
+    res.json(
+      await toolHandlers.handleResearchSources({ notebook_url, notebook_id, query, import: imp })
+    );
+  } catch (error) {
+    res
+      .status(500)
+      .json({ success: false, error: error instanceof Error ? error.message : String(error) });
+  }
+});
+
 // Generate + save a mind map — RPC extension. Body: { notebook_url, title }
 app.post('/content/mind-map', async (req: Request, res: Response) => {
   try {

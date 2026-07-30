@@ -57,7 +57,14 @@ import { SourcesRpc } from '../rpc/sources-rpc.js';
 import { QueryRpc } from '../rpc/query-rpc.js';
 import { StudioRpc, type StudioType } from '../rpc/studio-rpc.js';
 import { SharingRpc, type ShareStatus } from '../rpc/sharing-rpc.js';
-import { MindMapRpc, LabelsRpc, type MindMapResult, type Label } from '../rpc/extensions-rpc.js';
+import {
+  MindMapRpc,
+  LabelsRpc,
+  ResearchRpc,
+  type MindMapResult,
+  type Label,
+  type DiscoveredSource,
+} from '../rpc/extensions-rpc.js';
 import { ContentManager } from '../content/content-manager.js';
 import { runBatchToVault, type BatchToVaultResult } from '../utils/vault-writer.js';
 import type {
@@ -1625,6 +1632,28 @@ User: "Yes" → call remove_notebook`,
             description: 'Label ids to delete (for delete).',
           },
         },
+      },
+    },
+    {
+      name: 'research_sources',
+      description:
+        'Discover web sources for a notebook via NotebookLM Fast Research. RPC-backed. ' +
+        'Returns the found sources; set `import: true` to also add them to the notebook.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          query: { type: 'string', description: 'What to research on the web.' },
+          notebook_url: { type: 'string', description: 'NotebookLM notebook URL.' },
+          notebook_id: {
+            type: 'string',
+            description: 'Notebook UUID (alternative to notebook_url).',
+          },
+          import: {
+            type: 'boolean',
+            description: 'If true, import the discovered sources into the notebook.',
+          },
+        },
+        required: ['query'],
       },
     },
   ];
@@ -3997,6 +4026,42 @@ export class ToolHandlers {
     } catch (error) {
       const msg = error instanceof Error ? error.message : String(error);
       log.error(`❌ [TOOL] labels failed: ${msg}`);
+      return { success: false, error: msg };
+    }
+  }
+
+  /**
+   * Discover web sources for a notebook (RPC-only extension). Starts Fast
+   * Research, polls until results, and optionally imports the found sources.
+   */
+  async handleResearchSources(args: {
+    notebook_url?: string;
+    notebook_id?: string;
+    query: string;
+    import?: boolean;
+  }): Promise<
+    ToolResult<{ sources: DiscoveredSource[]; imported: number; taskId: string | null }>
+  > {
+    log.info(`🔧 [TOOL] research_sources called`);
+    try {
+      const notebookId = this.resolveNotebookId(args.notebook_url, args.notebook_id);
+      if (!notebookId) return { success: false, error: 'No notebook specified' };
+      if (!args.query) return { success: false, error: 'query is required' };
+      const res = await new ResearchRpc(await this.getRpcClient()).discover(
+        notebookId,
+        args.query,
+        {
+          import: args.import === true,
+        }
+      );
+      log.success(`  ✅ (RPC) research: ${res.sources.length} found, ${res.imported} imported`);
+      return {
+        success: true,
+        data: { sources: res.sources, imported: res.imported, taskId: res.taskId },
+      };
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error);
+      log.error(`❌ [TOOL] research_sources failed: ${msg}`);
       return { success: false, error: msg };
     }
   }

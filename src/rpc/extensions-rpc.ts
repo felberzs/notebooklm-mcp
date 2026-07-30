@@ -99,6 +99,103 @@ export class LabelsRpc {
   }
 }
 
+export interface DiscoveredSource {
+  url: string;
+  title: string;
+  description?: string;
+}
+
+export class ResearchRpc {
+  constructor(private readonly client: BatchExecuteClient) {}
+
+  /** Start Fast web research. Returns the task id. sourceType 1=web, 2=drive. */
+  async start(notebookId: string, query: string, sourceType = 1): Promise<string | null> {
+    const result = (await this.client.call(
+      'START_FAST_RESEARCH',
+      [[query, sourceType], null, 1, notebookId],
+      `/notebook/${notebookId}`
+    )) as unknown;
+    return Array.isArray(result) && typeof result[0] === 'string' ? result[0] : null;
+  }
+
+  /** Poll research; returns the task's discovered sources (empty until ready). */
+  async poll(notebookId: string): Promise<{ taskId: string | null; sources: DiscoveredSource[] }> {
+    let result = (await this.client.call(
+      'POLL_RESEARCH',
+      [null, null, notebookId],
+      `/notebook/${notebookId}`
+    )) as unknown;
+    if (Array.isArray(result) && Array.isArray((result as unknown[])[0])) {
+      result = (result as unknown[])[0];
+    }
+    const rows = Array.isArray(result) ? (result as unknown[]) : [];
+    for (const task of rows) {
+      if (!Array.isArray(task) || typeof task[0] !== 'string') continue; // skip timestamp rows
+      const taskId = task[0];
+      const info = Array.isArray(task[1]) ? (task[1] as unknown[]) : [];
+      const bundle = Array.isArray(info[3]) ? (info[3] as unknown[]) : [];
+      const rawSources = Array.isArray(bundle[0]) ? (bundle[0] as unknown[]) : [];
+      const sources: DiscoveredSource[] = [];
+      for (const s of rawSources) {
+        if (!Array.isArray(s)) continue;
+        const url = typeof s[0] === 'string' ? s[0] : '';
+        const title = typeof s[1] === 'string' ? s[1] : '';
+        if (!url && !title) continue;
+        sources.push({ url, title, description: typeof s[2] === 'string' ? s[2] : undefined });
+      }
+      return { taskId, sources };
+    }
+    return { taskId: null, sources: [] };
+  }
+
+  /** Import discovered sources into the notebook. */
+  async import(notebookId: string, taskId: string, sources: DiscoveredSource[]): Promise<void> {
+    const sourceArray = sources.map((s) => [
+      null,
+      null,
+      [s.url, s.title],
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      null,
+      2,
+    ]);
+    await this.client.call(
+      'IMPORT_RESEARCH',
+      [null, [1], taskId, notebookId, sourceArray],
+      `/notebook/${notebookId}`
+    );
+  }
+
+  /** Start web research, poll until sources are found (or timeout), optionally import. */
+  async discover(
+    notebookId: string,
+    query: string,
+    opts: { import?: boolean; timeoutMs?: number } = {}
+  ): Promise<{ taskId: string | null; sources: DiscoveredSource[]; imported: number }> {
+    const taskId = await this.start(notebookId, query);
+    const deadline = Date.now() + (opts.timeoutMs ?? 120000);
+    let sources: DiscoveredSource[] = [];
+    while (Date.now() < deadline) {
+      await new Promise((r) => setTimeout(r, 5000));
+      const p = await this.poll(notebookId);
+      if (p.sources.length > 0) {
+        sources = p.sources;
+        break;
+      }
+    }
+    let imported = 0;
+    if (opts.import && taskId && sources.length > 0) {
+      await this.import(notebookId, taskId, sources);
+      imported = sources.length;
+    }
+    return { taskId, sources, imported };
+  }
+}
+
 function parseLabels(result: unknown): Label[] {
   const raw = Array.isArray((result as unknown[])?.[1])
     ? ((result as unknown[])[1] as unknown[])

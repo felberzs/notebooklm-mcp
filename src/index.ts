@@ -680,6 +680,17 @@ class NotebookLMMCPServer {
             );
             break;
 
+          case 'research_sources':
+            result = await this.toolHandlers.handleResearchSources(
+              args as {
+                notebook_url?: string;
+                notebook_id?: string;
+                query: string;
+                import?: boolean;
+              }
+            );
+            break;
+
           default:
             log.error(`❌ [MCP] Unknown tool: ${name}`);
             return {
