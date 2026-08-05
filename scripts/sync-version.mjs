@@ -67,6 +67,16 @@ const targets = [
     transform: (s) =>
       s.replace(/(>\s*v)\d+\.\d+\.\d+(\s+—)/, `$1${VERSION}$2`),
   },
+  {
+    path: 'server.json',
+    label: 'MCP Registry server manifest',
+    // Two "version" fields (top-level + the npm package entry) must both track
+    // package.json, or the published registry entry drifts (it sat at 1.5.9
+    // while the package shipped 3.0.0). Global replace hits both; the "$schema"
+    // URL has no "version" key so it is untouched.
+    transform: (s) =>
+      s.replace(/("version":\s*)"\d+\.\d+\.\d+"/g, `$1"${VERSION}"`),
+  },
 ];
 
 let drifted = 0;
