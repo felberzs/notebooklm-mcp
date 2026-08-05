@@ -91,3 +91,29 @@ jobs:
             --title "$GITHUB_REF_NAME" \
             --generate-notes \
             --verify-tag
+
+  # Publish server.json to the official MCP Registry. Separate job so a registry
+  # hiccup can be re-run alone without re-attempting the npm publish, and gated
+  # on `release` so npm ships first. Auth is GitHub Actions OIDC (id-token:
+  # write, already granted above) — no stored token. server.json is kept at the
+  # released version by version:sync and enforced by version:check in `release`.
+  publish-registry:
+    name: Publish to MCP Registry
+    runs-on: ubuntu-latest
+    needs: release
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Download mcp-publisher
+        run: |
+          set -euo pipefail
+          curl -sL "https://github.com/modelcontextprotocol/registry/releases/download/v1.8.0/mcp-publisher_linux_amd64.tar.gz" -o mcp-publisher.tar.gz
+          tar -xzf mcp-publisher.tar.gz mcp-publisher
+          chmod +x mcp-publisher
+
+      - name: Publish server.json (GitHub OIDC auth)
+        run: |
+          set -euo pipefail
+          ./mcp-publisher login github-oidc
+          ./mcp-publisher publish server.json
