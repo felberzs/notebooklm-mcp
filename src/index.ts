@@ -843,6 +843,30 @@ class NotebookLMMCPServer {
  * Main entry point
  */
 async function main() {
+  // CLI subcommand dispatch. When launched as an MCP server (no args — how
+  // Claude Desktop / Cursor spawn it), fall through to the server below.
+  // A bare subcommand (e.g. `notebooklm-mcp setup-auth`) delegates to the
+  // matching CLI so global-install users can run the interactive login in a
+  // terminal instead of through the in-client tool (which the client's
+  // tool-call timeout kills mid-login). See issue #27.
+  const subcommand = process.argv[2];
+  if (subcommand && !subcommand.startsWith('-')) {
+    const cliModules: Record<string, string> = {
+      'setup-auth': './cli/setup-auth.js',
+      'de-auth': './cli/de-auth.js',
+      accounts: './cli/accounts.js',
+      help: './cli/help.js',
+    };
+    const cliModule = cliModules[subcommand];
+    if (cliModule) {
+      await import(cliModule); // each CLI runs its own main() on import
+      return;
+    }
+    console.error(`Unknown command: ${subcommand}`);
+    console.error(`Available commands: ${Object.keys(cliModules).join(', ')}`);
+    process.exit(1);
+  }
+
   // Print banner
   console.error('╔══════════════════════════════════════════════════════════╗');
   console.error('║                                                          ║');
