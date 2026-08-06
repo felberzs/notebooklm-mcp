@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [3.0.1] - 2026-08-06
+
+### Fixed — interactive Google login on global installs / stdio clients (#27)
+
+The interactive login could not be completed on a global (`npm install -g`)
+install driven by a stdio MCP client (e.g. Claude Desktop): the visible-browser
+login only shipped as an internal script with no exposed command, so users were
+forced to trigger it through the in-client MCP tool — where the client's
+tool-call timeout kills the up-to-10-minute Google login before it can finish.
+`get_health` reporting `headless: true` (the runtime query default, unrelated to
+the setup browser) and a bare `headless: false` param being silently dropped
+compounded the confusion.
+
+- **New `notebooklm-mcp-setup-auth` bin** and a `notebooklm-mcp setup-auth`
+  subcommand (also `de-auth`, `accounts`, `help`) so the interactive login runs
+  as a first-class terminal command — no clone, no in-client tool, no timeout.
+- **`setup_auth` / `re_auth` now accept a top-level `headless`** boolean (inverse
+  alias of `show_browser`) instead of silently ignoring it.
+- **Docs** updated to tell stdio-client users to run the login in a terminal
+  rather than asking the assistant to "log me in".
+
 ## [3.0.0] - 2026-07-30
 
 ### Changed — major refactor: dual transport (internal RPC API + DOM fallback)

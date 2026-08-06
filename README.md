@@ -4,7 +4,7 @@
 
 **Automate Google NotebookLM at scale. 33-endpoint HTTP REST API for n8n / Zapier / Make / curl, plus an MCP server for Claude Code / Cursor / Codex. Citation-backed Q&A, full Studio generation (audio · video · infographic · report · presentation · data table), multi-account rotation with auto-reauth across personal and Google Workspace accounts.**
 
-> v3.0.0 — **major refactor: dual transport.** The data plane now drives NotebookLM's **internal `batchexecute` RPC API** (the same one the web app calls) instead of scraping the DOM — **immune to UI rebrands, 10-100× faster** (list notebooks ~1 s vs ~30 s, generate a report ~13 s vs minutes), and more correct. The Playwright browser is kept as an **automatic fallback** (`NOTEBOOKLM_TRANSPORT=dom` forces it) plus login / auto-reauth, so nothing breaks if an internal endpoint shifts — **both paths ship permanently for robustness**. Adds **5 new tools**: notebook sharing, study aids (flashcards / quiz), mind maps, source labels, and web research / source discovery. Still batch-tested on overnight runs of 1 000+ questions. See the [changelog](./CHANGELOG.md). [Compare with `PleasePrompto/notebooklm-mcp`](https://roomi-fields.github.io/notebooklm-mcp/compare) for when this project is the right pick (REST API, full Studio, auto-reauth).
+> v3.0.1 — **major refactor: dual transport.** The data plane now drives NotebookLM's **internal `batchexecute` RPC API** (the same one the web app calls) instead of scraping the DOM — **immune to UI rebrands, 10-100× faster** (list notebooks ~1 s vs ~30 s, generate a report ~13 s vs minutes), and more correct. The Playwright browser is kept as an **automatic fallback** (`NOTEBOOKLM_TRANSPORT=dom` forces it) plus login / auto-reauth, so nothing breaks if an internal endpoint shifts — **both paths ship permanently for robustness**. Adds **5 new tools**: notebook sharing, study aids (flashcards / quiz), mind maps, source labels, and web research / source discovery. Still batch-tested on overnight runs of 1 000+ questions. See the [changelog](./CHANGELOG.md). [Compare with `PleasePrompto/notebooklm-mcp`](https://roomi-fields.github.io/notebooklm-mcp/compare) for when this project is the right pick (REST API, full Studio, auto-reauth).
 
 <!-- Badges -->
 
@@ -88,7 +88,7 @@ The fastest way to get NotebookLM into Claude Code. Distributed via the [`roomi-
 /plugin install notebooklm@roomi-fields
 ```
 
-That registers the MCP server, runs `npx -y @roomi-fields/notebooklm-mcp@<pinned-version>` automatically (Node ≥ 18 required), and lets you upgrade with two commands when a new release ships: `/plugin marketplace update roomi-fields` then `/reload-plugins`. Then run `npm run setup-auth` once to log into Google. To install RTFM at the same time: `/plugin install rtfm@roomi-fields`.
+That registers the MCP server, runs `npx -y @roomi-fields/notebooklm-mcp@<pinned-version>` automatically (Node ≥ 18 required), and lets you upgrade with two commands when a new release ships: `/plugin marketplace update roomi-fields` then `/reload-plugins`. Then run `npx -y -p @roomi-fields/notebooklm-mcp notebooklm-mcp-setup-auth` once in a terminal to log into Google (a visible Chrome opens). To install RTFM at the same time: `/plugin install rtfm@roomi-fields`.
 
 ### Option 1 — HTTP REST API (n8n, Zapier, Make, curl, any HTTP client)
 
@@ -131,7 +131,19 @@ claude mcp add notebooklm node /path/to/notebooklm-mcp/dist/index.js
 }
 ```
 
-Then say: _"Log me in to NotebookLM"_ → Chrome opens → log in with Google.
+**Log in once — in a terminal, not through the assistant.** Run the interactive
+Google login as a command; a visible Chrome window opens, you sign in, and the
+saved session is then reused by the MCP server:
+
+```bash
+npm run setup-auth          # from a clone (Option 2 above)
+notebooklm-mcp setup-auth   # from a global install (npm i -g @roomi-fields/notebooklm-mcp)
+```
+
+Do the login in a terminal rather than by asking the assistant _"log me in"_:
+some stdio MCP clients (e.g. Claude Desktop) cap tool-call duration and cut off
+the up-to-10-minute interactive login before you can finish signing in (see
+[issue #27](https://github.com/roomi-fields/notebooklm-mcp/issues/27)).
 
 ### Option 3 — Docker (NAS, server, headless)
 

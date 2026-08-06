@@ -1,12 +1,13 @@
 {
   "name": "@roomi-fields/notebooklm-mcp",
-  "version": "3.0.0",
+  "version": "3.0.1",
   "mcpName": "io.github.roomi-fields/notebooklm-mcp",
   "description": "MCP server for NotebookLM API with HTTP REST API - Zero hallucinations from your notebooks",
   "type": "module",
   "bin": {
     "notebooklm-mcp": "dist/index.js",
-    "notebooklm-mcp-proxy": "dist/stdio-http-proxy.js"
+    "notebooklm-mcp-proxy": "dist/stdio-http-proxy.js",
+    "notebooklm-mcp-setup-auth": "dist/cli/setup-auth.js"
   },
   "scripts": {
     "help": "node dist/cli/help.js",
@@ -20,7 +21,7 @@
     "dev:http": "tsx watch src/http-wrapper.ts",
     "dev:proxy": "tsx watch src/stdio-http-proxy.ts",
     "build": "tsc && npm run build:i18n && npm run build:chmod-bin",
-    "build:chmod-bin": "node -e \"require('fs').chmodSync('dist/index.js', 0o755); require('fs').chmodSync('dist/stdio-http-proxy.js', 0o755);\"",
+    "build:chmod-bin": "node -e \"require('fs').chmodSync('dist/index.js', 0o755); require('fs').chmodSync('dist/stdio-http-proxy.js', 0o755); require('fs').chmodSync('dist/cli/setup-auth.js', 0o755);\"",
     "version:sync": "node scripts/sync-version.mjs",
     "version:check": "node scripts/sync-version.mjs --check",
     "build:i18n": "node -e \"require('fs').cpSync('src/i18n', 'dist/i18n', {recursive: true, filter: (s) => s.endsWith('.json') || require('fs').statSync(s).isDirectory()})\"",

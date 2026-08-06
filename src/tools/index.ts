@@ -923,6 +923,12 @@ User: "Yes" → call remove_notebook`,
               'Show browser window (simple version). Default: true for setup. ' +
               'For advanced control, use browser_options instead.',
           },
+          headless: {
+            type: 'boolean',
+            description:
+              'Alias/inverse of show_browser: headless=false opens a visible ' +
+              'window, headless=true runs hidden. Ignored if show_browser is set.',
+          },
           browser_options: {
             type: 'object',
             description:
@@ -992,6 +998,12 @@ User: "Yes" → call remove_notebook`,
             description:
               'Show browser window (simple version). Default: true for re-auth. ' +
               'For advanced control, use browser_options instead.',
+          },
+          headless: {
+            type: 'boolean',
+            description:
+              'Alias/inverse of show_browser: headless=false opens a visible ' +
+              'window, headless=true runs hidden. Ignored if show_browser is set.',
           },
           browser_options: {
             type: 'object',
@@ -2327,6 +2339,7 @@ export class ToolHandlers {
   async handleSetupAuth(
     args: {
       show_browser?: boolean;
+      headless?: boolean;
       browser_options?: BrowserOptions;
     },
     sendProgress?: ProgressCallback
@@ -2338,7 +2351,9 @@ export class ToolHandlers {
       duration_seconds?: number;
     }>
   > {
-    const { show_browser, browser_options } = args;
+    // `headless` is the inverse alias of `show_browser`; show_browser wins.
+    const { browser_options, headless } = args;
+    const show_browser = args.show_browser ?? (headless !== undefined ? !headless : undefined);
 
     // CRITICAL: Send immediate progress to reset timeout from the very start
     await sendProgress?.('Initializing authentication setup...', 0, 10);
@@ -2468,6 +2483,7 @@ export class ToolHandlers {
   async handleReAuth(
     args: {
       show_browser?: boolean;
+      headless?: boolean;
       browser_options?: BrowserOptions;
     },
     sendProgress?: ProgressCallback
@@ -2479,7 +2495,9 @@ export class ToolHandlers {
       duration_seconds?: number;
     }>
   > {
-    const { show_browser, browser_options } = args;
+    // `headless` is the inverse alias of `show_browser`; show_browser wins.
+    const { browser_options, headless } = args;
+    const show_browser = args.show_browser ?? (headless !== undefined ? !headless : undefined);
 
     await sendProgress?.('Preparing re-authentication...', 0, 12);
     log.info(`🔧 [TOOL] re_auth called`);
