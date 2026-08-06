@@ -75,6 +75,7 @@
     "LICENSE",
     "docs",
     "scripts",
+    "skills",
     "deployment"
   ],
   "overrides": {

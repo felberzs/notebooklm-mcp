@@ -74,6 +74,7 @@ Flashcards and quizzes are generated via `generate_study_aid`; mind maps via `ge
 ### Integration Options
 
 - **MCP Protocol** — Claude Code, Cursor, Codex, any MCP client
+- **Agent Skill** — ships a bundled [`notebooklm` skill](./skills/notebooklm/SKILL.md) (also standalone: [`roomi-fields/notebooklm-skill`](https://github.com/roomi-fields/notebooklm-skill)) that teaches the agent citation formats, the daily-quota-aware batch pattern, and when to use which transport
 - **HTTP REST API** — n8n, Zapier, Make.com, custom integrations
 - **Docker** — Isolated deployment with Docker or Docker Compose
 - **[RTFM](https://github.com/roomi-fields/rtfm) retrieval layer** — `/batch-to-vault` writes citation-backed answers as markdown + JSON sidecars (`nblm-answer-v1` schema), indexable by [RTFM](https://github.com/roomi-fields/rtfm) (FTS5 + semantic) for unlimited offline queries. Ideal for academic / SOTA workflows. [Guide](./deployment/docs/14-RTFM-INTEGRATION.md).
