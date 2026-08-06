@@ -10,9 +10,7 @@
 
 [![CI](https://github.com/roomi-fields/notebooklm-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/roomi-fields/notebooklm-mcp/actions/workflows/ci.yml) [![npm version](https://badge.fury.io/js/%40roomi-fields%2Fnotebooklm-mcp.svg)](https://www.npmjs.com/package/@roomi-fields/notebooklm-mcp) [![npm downloads](https://img.shields.io/npm/dm/@roomi-fields/notebooklm-mcp.svg)](https://www.npmjs.com/package/@roomi-fields/notebooklm-mcp) [![codecov](https://codecov.io/gh/roomi-fields/notebooklm-mcp/branch/main/graph/badge.svg)](https://codecov.io/gh/roomi-fields/notebooklm-mcp) [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT) [![TypeScript](https://img.shields.io/badge/TypeScript-5.x-blue.svg)](https://www.typescriptlang.org/) [![Node.js](https://img.shields.io/badge/Node.js->=18-green.svg)](https://nodejs.org/)
 
-[![MCP](https://img.shields.io/badge/MCP-2025-green.svg)](https://modelcontextprotocol.io/) [![Claude Code](https://img.shields.io/badge/Claude_Code-MCP-8A2BE2)](https://claude.ai/claude-code) [![n8n](https://img.shields.io/badge/n8n-HTTP_API-orange)](./deployment/docs/04-N8N-INTEGRATION.md) [![GitHub](https://img.shields.io/github/stars/roomi-fields/notebooklm-mcp?style=social)](https://github.com/roomi-fields/notebooklm-mcp) [![MCP Toplist](https://mcptoplist.com/badge/io.github.roomi-fields%2Fnotebooklm-mcp.svg)](https://mcptoplist.com/server/io.github.roomi-fields%2Fnotebooklm-mcp)
-
-<sub>🏆 Ranked in the **top ~1.5%** of ~98,000 MCP servers on [MCP Toplist](https://mcptoplist.com/server/io.github.roomi-fields%2Fnotebooklm-mcp)</sub>
+[![MCP](https://img.shields.io/badge/MCP-compatible-green.svg)](https://modelcontextprotocol.io/) [![Claude Code](https://img.shields.io/badge/Claude_Code-MCP-8A2BE2)](https://claude.ai/claude-code) [![n8n](https://img.shields.io/badge/n8n-HTTP_API-orange)](./deployment/docs/04-N8N-INTEGRATION.md) [![GitHub](https://img.shields.io/github/stars/roomi-fields/notebooklm-mcp?style=social)](https://github.com/roomi-fields/notebooklm-mcp) [![MCP Toplist](https://mcptoplist.com/badge/io.github.roomi-fields%2Fnotebooklm-mcp.svg)](https://mcptoplist.com/server/io.github.roomi-fields%2Fnotebooklm-mcp)
 
 <!-- End Badges -->
 
@@ -40,8 +38,13 @@ Generate multiple content types from your notebook sources:
 | **Report**         | Summary, Detailed        | Language, custom instructions                  |
 | **Presentation**   | Overview, Detailed       | Language, custom instructions                  |
 | **Data Table**     | Simple, Detailed         | Language, custom instructions                  |
+| **Flashcards**     | Study cards              | Language, custom instructions                  |
+| **Quiz**           | Assessment questions     | Language, custom instructions                  |
+| **Mind Map**       | Interactive node graph   | Saved to the notebook                          |
 
 **Video Visual Styles**: classroom, documentary, animated, corporate, cinematic, minimalist
+
+Flashcards and quizzes are generated via `generate_study_aid`; mind maps via `generate_mind_map`. v3 also adds `share_notebook`, `manage_labels`, and `research_sources` (web/Drive source discovery) — see the [changelog](./CHANGELOG.md).
 
 ### Content Download
 
@@ -193,6 +196,9 @@ See [ROADMAP.md](./ROADMAP.md) for planned features and version history.
 
 **Latest releases:**
 
+- **v3.0.1** — Interactive Google login as a first-class CLI command (`notebooklm-mcp setup-auth`) for global / stdio-client installs; `setup_auth` / `re_auth` accept a top-level `headless` (#27)
+- **v3.0.0** — Major refactor: **dual transport** (NotebookLM's internal `batchexecute` RPC API with automatic DOM fallback), 10-100× faster and immune to UI rebrands; **5 new tools** (notebook sharing, study aids, mind maps, source labels, web research)
+- **v2.3.0** — Full support for Google's **"Gemini Notebook" rebrand**: create / list / rename / delete, sources, and every Studio generation type re-verified end-to-end (#23, #21)
 - **v2.2.1** — Recognize both NotebookLM hosts so **Google Workspace** accounts authenticate (the `notebook.google.com` alias); notebook listing no longer wastes ~30s after the "Gemini Notebook" rebrand; HTTP banner reads the real version. Diagnosis + patch by @kpietkaa (#19)
 - **v2.2.0** — Fix new-answer detection timing out when an answer repeats an earlier one (position-based identity, not text-hash); graceful shutdown on stdio disconnect; **Japanese** UI locale
 - **v2.1.1** — Thai UI selectors for `notebook_create` (partial, #18)
@@ -242,7 +248,6 @@ MIT — Use freely in your projects. See [LICENSE](./LICENSE).
 
 Thanks to everyone who has contributed code, ideas, and bug reports:
 
-- **Gérôme Dexheimer** — [@PleasePrompto](https://github.com/PleasePrompto), author of the upstream [`notebooklm-mcp`](https://github.com/PleasePrompto/notebooklm-mcp) this project builds on
 - **Khizar Jamshaid Iqbal** — [@KhizarJamshaidIqbal](https://github.com/KhizarJamshaidIqbal), 2025 UI selector fixes, doctor script, PII scrub
 - **Kazik Pietka** — [@kpietkaa](https://github.com/kpietkaa), `notebook.google.com` rebrand support
 - **Rui Ruiberriz** — [@Excauboi](https://github.com/Excauboi), `hl=<uiLocale>` on app URLs + click-through scrape fallback

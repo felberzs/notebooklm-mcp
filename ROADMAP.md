@@ -2,17 +2,11 @@
 
 This document tracks planned features, recent implementations, and future ideas for the NotebookLM MCP Server.
 
-## Current Version: v1.5.4
+## Current Version: v3.0.1
 
 ---
 
 ## Backlog
-
-### High Priority
-
-| Feature                  | Description                                                       |
-| ------------------------ | ----------------------------------------------------------------- |
-| **/notebooks/:id/share** | API endpoint to share notebooks between accounts programmatically |
 
 ### Medium Priority
 
@@ -22,7 +16,6 @@ This document tracks planned features, recent implementations, and future ideas 
 | **Scrape after auth**             | Option to auto-scrape notebooks after successful authentication |
 | **Persist scraped notebooks**     | Keep scraped notebooks across re-authentication                 |
 | **Cleanup test notebooks**        | Delete unused notebooks in test accounts (100 limit reached)    |
-| **Source Discovery**              | Discover sources from Web/Drive (Fast/Deep modes)               |
 | **Edit/Delete notes**             | Complete notes CRUD operations                                  |
 
 ### Low Priority
@@ -34,35 +27,21 @@ This document tracks planned features, recent implementations, and future ideas 
 
 ---
 
-## Upcoming
-
-### v1.6.0 - Study & Learning Features
-
-**Priority: Medium** - Add study-focused content types.
-
-**Mind Maps:**
-
-- [ ] Generate mind map from sources
-- [ ] Expand/collapse nodes
-- [ ] Download as image (PNG/SVG)
-
-**Quiz:**
-
-- [ ] Generate quiz with questions
-- [ ] Question types (MCQ, true/false, open)
-- [ ] Difficulty levels
-- [ ] Export quiz
-
-**Learning Cards (Flashcards):**
-
-- [ ] Generate flashcards from sources
-- [ ] Card format customization
-- [ ] Spaced repetition support
-- [ ] Export as Anki/Quizlet
-
----
-
 ## Recently Implemented
+
+### v3.0.0 - Dual transport (internal RPC API) + 5 new tools
+
+- [x] Data plane migrated to NotebookLM's internal `batchexecute` RPC API with automatic DOM fallback (10-100× faster, immune to UI rebrands)
+- [x] `share_notebook` — read/set the public link + list collaborators
+- [x] `generate_study_aid` — flashcards & quiz
+- [x] `generate_mind_map` — interactive mind map, saved to the notebook
+- [x] `manage_labels` — source-label CRUD
+- [x] `research_sources` — web/Drive source discovery (fast/deep modes)
+- [x] Interactive login as a CLI command (`notebooklm-mcp setup-auth`) for global / stdio installs — v3.0.1 (#27)
+
+### v2.3.0 - "Gemini Notebook" rebrand support
+
+- [x] Create / list / rename / delete, sources, and every Studio generation type re-verified against the rebuilt UI (#23, #21)
 
 ### v1.5.4 - Citation Source Format Fix
 

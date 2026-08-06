@@ -77,6 +77,14 @@ const targets = [
     transform: (s) =>
       s.replace(/("version":\s*)"\d+\.\d+\.\d+"/g, `$1"${VERSION}"`),
   },
+  {
+    path: 'ROADMAP.md',
+    label: 'ROADMAP current version',
+    // The "## Current Version" header drifted to 1.5.4 while the package shipped
+    // 3.0.x. Kept in lockstep here (and enforced by version:check in CI).
+    transform: (s) =>
+      s.replace(/(## Current Version:\s*v)\d+\.\d+\.\d+/, `$1${VERSION}`),
+  },
 ];
 
 let drifted = 0;
