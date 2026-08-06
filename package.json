@@ -24,6 +24,7 @@
     "build:chmod-bin": "node -e \"require('fs').chmodSync('dist/index.js', 0o755); require('fs').chmodSync('dist/stdio-http-proxy.js', 0o755); require('fs').chmodSync('dist/cli/setup-auth.js', 0o755);\"",
     "version:sync": "node scripts/sync-version.mjs",
     "version:check": "node scripts/sync-version.mjs --check",
+    "skill:check": "node scripts/check-skill-sync.mjs",
     "build:i18n": "node -e \"require('fs').cpSync('src/i18n', 'dist/i18n', {recursive: true, filter: (s) => s.endsWith('.json') || require('fs').statSync(s).isDirectory()})\"",
     "watch": "tsc --watch",
     "dev": "tsx watch src/index.ts",

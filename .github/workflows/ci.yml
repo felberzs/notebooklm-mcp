@@ -42,6 +42,15 @@ jobs:
       - name: Run type coverage
         run: npx type-coverage --at-least 95
 
+      # Bundled skills are published twice on purpose (standalone repo for
+      # discovery + bundled copy so plugin installs ship them). Fail loudly if
+      # the copies drift. One node version is enough — it is a network check.
+      - name: Check bundled skills match their canonical repos
+        if: matrix.node-version == '20.x'
+        run: npm run skill:check
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+
       - name: Upload coverage to Codecov
         if: matrix.node-version == '20.x'
         uses: codecov/codecov-action@v4
