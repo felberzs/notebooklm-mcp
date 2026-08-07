@@ -1,0 +1,12 @@
+# Shell scripts must always be checked out with LF endings.
+#
+# The Docker image runs scripts/docker-entrypoint.sh as its CMD. With CRLF
+# endings the kernel reads the shebang as "/bin/bash\r", fails to find that
+# interpreter, and the container dies immediately with exit 127:
+#
+#   exec: /app/scripts/docker-entrypoint.sh: not found
+#
+# Git stores these blobs with LF, but a clone made with core.autocrlf=true
+# (the Git for Windows default) converts them on checkout and produces a
+# broken image. Forcing eol=lf here makes the checkout platform-independent.
+*.sh text eol=lf
