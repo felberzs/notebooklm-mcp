@@ -7,6 +7,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [3.0.3] - 2026-08-19
+
+### Fixed — wrong answer returned in long conversations (virtualized chat list)
+
+`notebook_ask` with a `session_id` could return an **older, unrelated answer**
+instead of the one just generated, on any notebook with enough chat history.
+Diagnosed by @Astraktes (#29): NotebookLM's chat list is virtualized, so the
+mounted DOM window does not keep order in sync with message recency — a freshly
+generated answer was observed at index 8 of 11, with older, already-known
+answers at 9 and 10. Every position rule (last container, or index past a
+pre-submission baseline count) therefore picks the wrong container.
+
+Reverting to plain hash dedup was not an option: that is what 2.2.0 replaced,
+because a repeated answer text (two questions both answered "Yes") collides
+with a known hash and times out after the full 5-minute budget.
+
+**Both are fixed by counting occurrences instead of testing membership.** The
+baseline is now a multiset (`snapshotAnswerTexts` → text hash to occurrences),
+and a mounted answer is new when its text occurs _more often_ than the baseline
+recorded. A second "Yes" goes 1 to 2 and is detected; an unchanged older answer
+does not move and is not. DOM position is never consulted.
+
+- `countAnswerContainers` and `baselineContainerCount` removed outright, call
+  sites in `browser-session` and `content-generator` migrated in the same change.
+- Both failure modes are now regression-tested.
+- Known residual: a message unmounted when the baseline was captured is absent
+  from it and reads as new when it scrolls into view. This now logs a warning
+  naming the incomplete baseline instead of failing silently.
+
+Only the browser path was affected — one-shot `notebook_ask` calls go over RPC
+and were always correct.
+
+---
+
 ## [3.0.2] - 2026-08-19
 
 ### Fixed — `--help` started a server instead of printing help (#30)
