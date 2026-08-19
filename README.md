@@ -6,6 +6,8 @@
 
 > v3.0.3 — **major refactor: dual transport.** The data plane now drives NotebookLM's **internal `batchexecute` RPC API** (the same one the web app calls) instead of scraping the DOM — **immune to UI rebrands, 10-100× faster** (list notebooks ~1 s vs ~30 s, generate a report ~13 s vs minutes), and more correct. The Playwright browser is kept as an **automatic fallback** (`NOTEBOOKLM_TRANSPORT=dom` forces it) plus login / auto-reauth, so nothing breaks if an internal endpoint shifts — **both paths ship permanently for robustness**. Adds **5 new tools**: notebook sharing, study aids (flashcards / quiz), mind maps, source labels, and web research / source discovery. Still batch-tested on overnight runs of 1 000+ questions. See the [changelog](./CHANGELOG.md). [Compare with `PleasePrompto/notebooklm-mcp`](https://roomi-fields.github.io/notebooklm-mcp/compare) for when this project is the right pick (REST API, full Studio, auto-reauth).
 
+> **Note (July 2026):** Google rebranded **NotebookLM** to **Gemini Notebook**. It is the same product, existing links redirect, and this project drives the same underlying service — the browser path was updated for the new DOM in v2.3.0 and the RPC path in v3.0.0. Package and repository keep the `notebooklm` name.
+
 <!-- Badges -->
 
 [![CI](https://github.com/roomi-fields/notebooklm-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/roomi-fields/notebooklm-mcp/actions/workflows/ci.yml) [![npm version](https://badge.fury.io/js/%40roomi-fields%2Fnotebooklm-mcp.svg)](https://www.npmjs.com/package/@roomi-fields/notebooklm-mcp) [![npm downloads](https://img.shields.io/npm/dm/@roomi-fields/notebooklm-mcp.svg)](https://www.npmjs.com/package/@roomi-fields/notebooklm-mcp) [![codecov](https://codecov.io/gh/roomi-fields/notebooklm-mcp/branch/main/graph/badge.svg)](https://codecov.io/gh/roomi-fields/notebooklm-mcp) [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT) [![TypeScript](https://img.shields.io/badge/TypeScript-5.x-blue.svg)](https://www.typescriptlang.org/) [![Node.js](https://img.shields.io/badge/Node.js->=18-green.svg)](https://nodejs.org/)
@@ -15,6 +17,41 @@
 <!-- End Badges -->
 
 </div>
+
+---
+
+## What You Can Build
+
+🔗 **No-code automation pipelines** — The 33-endpoint REST API means NotebookLM becomes a step in n8n, Zapier, Make, or a plain `curl` in cron. No agent, no MCP client, no Node in your stack — just HTTP. This is the half most NotebookLM libraries don't have.
+
+🤖 **Agent tooling** — The same engine over MCP for Claude Code, Cursor and Codex, with a bundled skill that primes the agent on citation formats, the daily-quota-aware batch pattern, and transport selection.
+
+📚 **Research at volume** — Multi-account rotation with automatic re-authentication, built for overnight runs of 1 000+ questions across several notebooks without babysitting.
+
+🎙️ **Full Studio generation** — Audio overviews, video, infographics, reports, presentations, data tables, plus flashcards, quizzes and mind maps — generated and downloaded programmatically.
+
+## Use Cases & Recipes
+
+NotebookLM is a **grounded** engine: Gemini reads your sources and answers _from them_, with citations. The winning pattern is to let it do the expensive reading while your own stack handles orchestration and the last mile.
+
+**Spend fewer tokens — offload the reading**
+
+- **🪙 Zero-token synthesis layer** — Drop 30 documents in a notebook, let Gemini do the heavy analysis, and spend your agent's context only on the final polish. The reasoning happens server-side; your agent just orchestrates (`add_notebook` → `source_add` → `notebook_ask`).
+- **💾 Answer cache you can re-read offline** — `vault_batch` writes every answer to disk as structured JSON against a published [schema](https://schemas.roomi-fields.com/nblm-answer-v1.json), so a batch run becomes a corpus you can grep, diff, re-index, or feed to a retrieval layer — without re-querying and re-spending quota.
+
+**Wire it into things that aren't agents**
+
+- **⚙️ NotebookLM as an n8n / Zapier / Make step** — Because it speaks plain HTTP, a citation-backed answer becomes one node in a workflow: a form submission triggers a question, the cited answer lands in a sheet, a Slack message, or a database. No agent runtime involved.
+- **📄 Document intake pipeline** — Watch a folder or an inbox, push new PDFs and URLs in as sources, and ask a standing set of questions against them on every arrival.
+
+**Grounded answers with a paper trail**
+
+- **🔍 Citations with the actual source text** — Answers come back with source names _and the quoted excerpts_ they rest on, extracted from the citation panel — so a claim can be checked, not just attributed.
+- **🎓 Literature review at thesis scale** — Batch 100+ research questions across multiple notebooks, rotate accounts as daily quotas run out, and resume where it stopped. Built for, and tested on, exactly this.
+
+**Get artifacts back out**
+
+- **🔁 One source set, every format** — Fan a single notebook out to a podcast, a video, a slide deck, a report, a quiz and a mind map, then download them all locally.
 
 ---
 
