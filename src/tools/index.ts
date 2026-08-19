@@ -3881,9 +3881,28 @@ export class ToolHandlers {
   private async getRpcClient(): Promise<BatchExecuteClient> {
     const sharedContextManager = this.sessionManager.getSharedContextManager();
     const context = await sharedContextManager.getOrCreateContext();
-    const raw = await context.cookies('https://notebooklm.google.com');
-    const cookies = raw.map((c) => ({ name: c.name, value: c.value }));
-    return new BatchExecuteClient({ cookies, hl: CONFIG.uiLocale });
+    // The July 2026 rebrand moved accounts to notebook.google.com. Cookies must
+    // be collected for the SAME host the calls target: asking the legacy host
+    // for a jar and then talking to it returned a logged-out homepage, so every
+    // RPC call reported "session expired" and silently degraded to the DOM
+    // fallback on a valid session — verified live on 2026-08-19. Try the current
+    // host first, fall back to the legacy one for tenants still served there.
+    const hosts = ['notebook.google.com', 'notebooklm.google.com'];
+    let lastError: unknown;
+    for (const host of hosts) {
+      const raw = await context.cookies(`https://${host}`);
+      const cookies = raw.map((c) => ({ name: c.name, value: c.value }));
+      const client = new BatchExecuteClient({ cookies, hl: CONFIG.uiLocale, baseHost: host });
+      try {
+        await client.bootstrap();
+        return client;
+      } catch (e) {
+        lastError = e;
+      }
+    }
+    throw lastError instanceof Error
+      ? lastError
+      : new Error('RPC bootstrap failed on every known NotebookLM host.');
   }
 
   private async getNotebookRpc(): Promise<NotebookRpc> {
