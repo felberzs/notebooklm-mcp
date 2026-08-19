@@ -268,6 +268,15 @@ server {
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
         proxy_cache_bypass $http_upgrade;
+
+        # REQUIRED. /ask is one long request: the server waits up to 10 minutes
+        # for NotebookLM, while nginx's default proxy_read_timeout is 60s — so
+        # without these, any slow question dies as a 504 after one minute even
+        # though the answer was on its way. Buffering off keeps the response
+        # flowing straight through instead of being held back.
+        proxy_read_timeout 660s;
+        proxy_send_timeout 660s;
+        proxy_buffering off;
     }
 
     # noVNC (restrict access!)
@@ -280,6 +289,23 @@ server {
     }
 }
 ```
+
+### Long requests behind any proxy
+
+`POST /ask` is a **single request held open** until NotebookLM answers — there is
+no streaming and nothing to reconnect to, so the whole burden falls on the proxy
+in front. Every common default is shorter than a slow NotebookLM answer:
+
+| Proxy                           | Default idle/read timeout                 | Needs                                                    |
+| ------------------------------- | ----------------------------------------- | -------------------------------------------------------- |
+| nginx                           | 60s                                       | `proxy_read_timeout 660s;`                               |
+| Traefik                         | 0 (none) — but check `respondingTimeouts` | raise `readTimeout`                                      |
+| Kubernetes ingress-nginx        | 60s                                       | `nginx.ingress.kubernetes.io/proxy-read-timeout: "660"`  |
+| Cloudflare Tunnel / proxied DNS | ~100s (524)                               | keep `/ask` off the proxied hostname, or shorten answers |
+
+Cloudflare's limit cannot be raised on most plans. If you must go through it,
+either call `/ask` on a non-proxied hostname, or split long work into smaller
+questions.
 
 ### Security Considerations
 
