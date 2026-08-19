@@ -20,7 +20,7 @@ import { randomDelay, humanType } from '../utils/stealth-utils.js';
 import {
   waitForLatestAnswer,
   snapshotAllResponses,
-  countAnswerContainers,
+  snapshotAnswerTexts,
   isErrorMessage,
 } from '../utils/page-utils.js';
 import { log } from '../utils/logger.js';
@@ -526,13 +526,13 @@ export class ContentGenerator {
       // Position baseline for new-answer detection — captured before the
       // message is sent, so the container that appears afterward is
       // unambiguously the new answer even if its text repeats a prior one.
-      const baselineContainerCount = await countAnswerContainers(this.page);
+      const baselineCounts = await snapshotAnswerTexts(this.page);
 
       // Send the chat message
       await this.sendChatMessage(prompt);
 
       // Wait for response using the proven page-utils approach
-      const result = await this.waitForChatResponse(config, baselineContainerCount);
+      const result = await this.waitForChatResponse(config, baselineCounts);
 
       if (result.ready && result.content) {
         log.success(`  ${config.displayName} generated via chat fallback`);
@@ -635,7 +635,7 @@ export class ContentGenerator {
    */
   private async waitForChatResponse(
     config: ContentTypeConfig,
-    baselineContainerCount: number
+    baselineCounts: Map<number, number>
   ): Promise<ContentWaitResult> {
     log.info(
       `  Waiting for ${config.displayName} response (up to ${config.waitTimeout / 60000} minutes)...`
@@ -655,7 +655,7 @@ export class ContentGenerator {
       timeoutMs: config.waitTimeout,
       pollIntervalMs: 2000, // Poll every 2 seconds
       ignoreTexts: existingResponses,
-      baselineContainerCount,
+      baselineCounts,
       debug: true, // Enable debug to see what's happening
     });
 

@@ -212,7 +212,7 @@ function isPlaceholder(text: string): boolean {
  * Returns null if no response found
  */
 export async function snapshotLatestResponse(page: Page): Promise<string | null> {
-  return await extractLatestText(page, new Set(), false, 0);
+  return await extractLatestText(page, new Map(), false, 0);
 }
 
 /**
@@ -253,20 +253,41 @@ export async function snapshotAllResponses(page: Page): Promise<string[]> {
 }
 
 /**
- * Count `.to-user-container` elements (the primary answer-container selector).
+ * Snapshot the answer texts currently rendered in the chat, as a multiset
+ * (text hash -> how many times that exact text appears).
  *
- * Used as a position-based baseline: NotebookLM adds exactly one new
- * `.to-user-container` per submitted question, so "index >= baseline" reliably
- * identifies the new answer even when its text happens to match a prior
- * answer's text (e.g. two questions both answered "Yes"). Text-hash dedup
- * alone cannot distinguish that case — see `extractLatestText`.
+ * This is the "before" state for `waitForLatestAnswer`. Counting occurrences
+ * rather than collecting a plain set is what makes a *repeated* answer text
+ * detectable: if the notebook already shows one "Yes" and the new answer is
+ * also "Yes", the count goes 1 -> 2, which a set could never reveal.
+ *
+ * Identity is deliberately content-only. DOM position is NOT usable here:
+ * NotebookLM's chat list is virtualized and the mounted window does not keep
+ * DOM order in sync with message recency — a freshly generated answer has been
+ * observed at index 8 of 11 with older, already-known answers at 9 and 10.
+ * See issue #30's sibling report in PR #29.
  */
-export async function countAnswerContainers(page: Page): Promise<number> {
+export async function snapshotAnswerTexts(page: Page): Promise<Map<number, number>> {
+  const counts = new Map<number, number>();
   try {
-    return (await page.$$('.to-user-container')).length;
+    const containers = await page.$$('.to-user-container');
+    for (const container of containers) {
+      try {
+        const textElement = await container.$('.message-text-content');
+        if (!textElement) continue;
+        const sanitized = sanitizeResponseText((await textElement.innerText()) || '');
+        if (!sanitized) continue;
+        const h = hashString(sanitized);
+        counts.set(h, (counts.get(h) ?? 0) + 1);
+      } catch {
+        continue;
+      }
+    }
   } catch {
-    return 0;
+    // A failed snapshot yields an empty baseline: every mounted text then reads
+    // as new, which is the same behaviour as having no baseline at all.
   }
+  return counts;
 }
 
 /**
@@ -322,13 +343,15 @@ export async function waitForLatestAnswer(
     pollIntervalMs?: number;
     ignoreTexts?: string[];
     /**
-     * Count of `.to-user-container` elements captured (via
-     * `countAnswerContainers`) BEFORE the question was submitted. When
-     * provided, the new answer is identified by DOM position (any container
-     * at index >= baseline) instead of by text-hash dedup, so a repeated
-     * answer text (e.g. two "Yes" answers) is still detected correctly.
+     * Multiset of answer texts present BEFORE the question was submitted, from
+     * `snapshotAnswerTexts`. A text counts as "new" when it appears more often
+     * now than it did then, which detects a repeated answer text that plain
+     * hash dedup would skip as already-seen.
+     *
+     * Position-based identity was tried (3.0.x) and disproven: the chat list is
+     * virtualized, so DOM order does not track recency.
      */
-    baselineContainerCount?: number;
+    baselineCounts?: Map<number, number>;
     debug?: boolean;
   } = {}
 ): Promise<string | null> {
@@ -337,23 +360,25 @@ export async function waitForLatestAnswer(
     timeoutMs = 120000,
     pollIntervalMs = 1000,
     ignoreTexts = [],
-    baselineContainerCount,
+    baselineCounts,
     debug = false,
   } = options;
 
   const deadline = Date.now() + timeoutMs;
   const sanitizedQuestion = question.trim().toLowerCase();
 
-  // Track ALL known texts as HASHES (memory efficient!)
-  const knownHashes = new Set<number>();
+  // Baseline multiset: text hash -> occurrences before the question was sent.
+  // Occurrences (not a plain set) are what make a repeated answer text visible.
+  const baseline = new Map<number, number>(baselineCounts ?? []);
   for (const text of ignoreTexts) {
     if (typeof text === 'string' && text.trim()) {
-      knownHashes.add(hashString(text.trim()));
+      const h = hashString(text.trim());
+      baseline.set(h, (baseline.get(h) ?? 0) + 1);
     }
   }
 
   if (debug) {
-    log.debug(`🔍 [DEBUG] Waiting for NEW answer. Ignoring ${knownHashes.size} known responses`);
+    log.debug(`🔍 [DEBUG] Waiting for NEW answer. Baseline holds ${baseline.size} distinct texts`);
   }
 
   let pollCount = 0;
@@ -386,13 +411,7 @@ export async function waitForLatestAnswer(
     }
 
     // Extract latest NEW text
-    const candidate = await extractLatestText(
-      page,
-      knownHashes,
-      debug,
-      pollCount,
-      baselineContainerCount
-    );
+    const candidate = await extractLatestText(page, baseline, debug, pollCount);
 
     if (candidate) {
       const normalized = candidate.trim();
@@ -436,7 +455,9 @@ export async function waitForLatestAnswer(
           if (debug) {
             log.debug('🔍 [DEBUG] Found question echo, ignoring');
           }
-          knownHashes.add(hashString(normalized)); // Mark as seen
+          // Absorb the echo into the baseline so it stops reading as excess.
+          const echoHash = hashString(normalized);
+          baseline.set(echoHash, (baseline.get(echoHash) ?? 0) + 1);
           await page.waitForTimeout(pollIntervalMs);
           continue;
         }
@@ -483,32 +504,33 @@ export async function waitForLatestAnswer(
 }
 
 /**
- * Extract the latest NEW response text from the page
+ * Extract the latest NEW response text from the page.
  *
- * When `baselineContainerCount` is provided, identity is by DOM position:
- * only `.to-user-container` elements added after the baseline are
- * considered "new" (scanned from the end, most recent first). This is the
- * reliable path — NotebookLM adds exactly one new container per submitted
- * question, so position can't be fooled by a repeated answer text.
+ * Identity is by content *multiplicity*, never by DOM position. A mounted
+ * answer counts as new when its exact text now appears more often than the
+ * pre-submission baseline recorded — so a second "Yes" is detected (its count
+ * goes 1 -> 2) while an unchanged older answer is not.
  *
- * Falls back to hash-based text dedup when no baseline is given (e.g.
- * `snapshotLatestResponse`, which has no "before" state to compare against).
- * The hash fallback has a known false-negative: if the new answer's text
- * happens to match an earlier answer's text, it gets skipped as "known".
+ * Position was used until 3.0.2 and is wrong here: the chat list is
+ * virtualized, so the mounted window does not preserve message recency.
+ *
+ * Known residual limit: if an older message was NOT mounted when the baseline
+ * was taken (virtualization again), it is absent from the baseline and reads as
+ * new the moment it scrolls into view. `question` is carried in the options for
+ * a future anchor-based identity that would close this; it needs DOM structure
+ * we cannot verify without a live session.
  *
  * @param page Playwright page instance
- * @param knownHashes Set of hashes of already-seen response texts (hash-fallback path only)
+ * @param baseline Text hash -> occurrences before the question was submitted
  * @param debug Enable debug logging
  * @param pollCount Current poll number (for conditional logging)
- * @param baselineContainerCount Container count before the question was submitted (position path)
- * @returns First NEW response text found, or null
+ * @returns The new response text, or null
  */
 async function extractLatestText(
   page: Page,
-  knownHashes: Set<number>,
+  baseline: Map<number, number>,
   debug: boolean,
-  pollCount: number,
-  baselineContainerCount?: number
+  pollCount: number
 ): Promise<string | null> {
   // Scroll to bottom periodically to reveal new messages (every 5 polls)
   if (pollCount % 5 === 0) {
@@ -533,82 +555,58 @@ async function extractLatestText(
 
     // Log container count (but don't early exit - always check content)
     if (debug && pollCount % 5 === 0) {
-      log.dim(
-        `⏭️ [EXTRACT] Checking ${totalContainers} containers (${knownHashes.size} known hashes)`
-      );
-    }
-
-    if (typeof baselineContainerCount === 'number') {
-      // Position-based identity: scan only containers added after the
-      // baseline, most recent first, and return the first with extractable
-      // text. Deliberately does NOT compare text content — a container at a
-      // new position IS the new answer, regardless of what it says.
-      for (let idx = containers.length - 1; idx >= baselineContainerCount; idx--) {
-        const container = containers[idx];
-        try {
-          const textElement = await container.$('.message-text-content');
-          if (textElement) {
-            const text = await textElement.innerText();
-            const sanitized = sanitizeResponseText(text || '');
-            if (sanitized) {
-              log.success(
-                `✅ [EXTRACT] Found new-position text in container[${idx}] (baseline ${baselineContainerCount}): ${sanitized.length} chars`
-              );
-              return sanitized;
-            }
-          }
-        } catch {
-          continue;
-        }
-      }
-      if (debug && pollCount % 5 === 0) {
-        log.dim(
-          `⏭️ [EXTRACT] No container past baseline ${baselineContainerCount} yet (${totalContainers} total)`
-        );
-      }
-      return null;
+      log.dim(`⏭️ [EXTRACT] Checking ${totalContainers} containers (baseline ${baseline.size})`);
     }
 
     if (containers.length > 0) {
-      // Only log every 5th poll to reduce noise
       if (debug && pollCount % 5 === 0) {
-        log.dim(`🔍 [EXTRACT] Scanning ${totalContainers} containers (${knownHashes.size} known)`);
+        log.dim(`🔍 [EXTRACT] Scanning ${totalContainers} containers (baseline ${baseline.size})`);
       }
 
-      let skipped = 0;
+      // Read every mounted container, in DOM order, and tally how often each
+      // exact text occurs right now.
+      const texts: string[] = [];
       let empty = 0;
-
-      // Scan ALL containers to find the FIRST with NEW text
-      for (let idx = 0; idx < containers.length; idx++) {
-        const container = containers[idx];
+      for (const container of containers) {
         try {
           const textElement = await container.$('.message-text-content');
-          if (textElement) {
-            const text = await textElement.innerText();
-            const sanitized = sanitizeResponseText(text || '');
-            if (sanitized) {
-              // Hash-based comparison (faster & less memory)
-              const textHash = hashString(sanitized);
-              if (!knownHashes.has(textHash)) {
-                log.success(
-                  `✅ [EXTRACT] Found NEW text in container[${idx}]: ${sanitized.length} chars`
-                );
-                return sanitized;
-              } else {
-                skipped++;
-              }
-            } else {
-              empty++;
-            }
-          }
+          if (!textElement) continue;
+          const sanitized = sanitizeResponseText((await textElement.innerText()) || '');
+          if (sanitized) texts.push(sanitized);
+          else empty++;
         } catch {
           continue;
         }
       }
 
-      // Only log summary if debug enabled
+      // A text is new when it occurs more often than the baseline recorded.
+      // Walking the tally as we go handles duplicates within this poll too.
+      const seenSoFar = new Map<number, number>();
+      const candidates: string[] = [];
+      for (const text of texts) {
+        const h = hashString(text);
+        const soFar = (seenSoFar.get(h) ?? 0) + 1;
+        seenSoFar.set(h, soFar);
+        if (soFar > (baseline.get(h) ?? 0)) candidates.push(text);
+      }
+
+      if (candidates.length > 0) {
+        if (candidates.length > 1) {
+          // Normally impossible: one question yields one answer. More than one
+          // means the baseline was incomplete (a message was unmounted when it
+          // was taken). Take the last in DOM order and say so, so it is
+          // diagnosable rather than silent.
+          log.warning(
+            `⚠️ [EXTRACT] ${candidates.length} texts exceed the baseline — incomplete baseline? Taking the last.`
+          );
+        }
+        const chosen = candidates[candidates.length - 1];
+        log.success(`✅ [EXTRACT] Found NEW text: ${chosen.length} chars`);
+        return chosen;
+      }
+
       if (debug && pollCount % 5 === 0) {
-        log.dim(`⏭️ [EXTRACT] No NEW text (skipped ${skipped} known, ${empty} empty)`);
+        log.dim(`⏭️ [EXTRACT] No NEW text (${texts.length} known, ${empty} empty)`);
       }
       return null; // Don't fall through to fallback!
     } else {
@@ -651,7 +649,9 @@ async function extractLatestText(
 
           const text = await container.innerText();
           const sanitized = sanitizeResponseText(text || '');
-          if (sanitized && !knownHashes.has(hashString(sanitized))) {
+          // Fallback selectors carry no reliable ordering, so presence-vs-baseline
+          // is the best available test here.
+          if (sanitized && (baseline.get(hashString(sanitized)) ?? 0) === 0) {
             return sanitized;
           }
         } catch {
@@ -738,7 +738,7 @@ async function extractLatestText(
 export default {
   snapshotLatestResponse,
   snapshotAllResponses,
-  countAnswerContainers,
+  snapshotAnswerTexts,
   countResponseElements,
   sanitizeResponseText,
   waitForLatestAnswer,

@@ -22,7 +22,7 @@ import { humanType, randomDelay } from '../utils/stealth-utils.js';
 import {
   waitForLatestAnswer,
   snapshotAllResponses,
-  countAnswerContainers,
+  snapshotAnswerTexts,
   isRateLimitMessage,
 } from '../utils/page-utils.js';
 import {
@@ -660,7 +660,7 @@ export class BrowserSession {
 
       // Position baseline for new-answer detection — captured last, right
       // before typing/submit, so no DOM mutation slips in between.
-      const baselineContainerCount = await countAnswerContainers(page);
+      const baselineCounts = await snapshotAnswerTexts(page);
 
       // Check for rate limit BEFORE trying to submit a question
       log.info(`  🔍 Checking for rate limit before asking...`);
@@ -714,7 +714,7 @@ export class BrowserSession {
         timeoutMs: 300000, // 5 minutes (long answers with many citations can exceed 2 min)
         pollIntervalMs: 1000,
         ignoreTexts: existingResponses,
-        baselineContainerCount,
+        baselineCounts,
         debug: true,
       });
 

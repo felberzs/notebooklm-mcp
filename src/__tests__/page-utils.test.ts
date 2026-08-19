@@ -458,7 +458,7 @@ describe('Page Utils - Exported Functions', () => {
   let snapshotLatestResponse: any;
   let snapshotAllResponses: any;
   let countResponseElements: any;
-  let countAnswerContainers: any;
+  let snapshotAnswerTexts: any;
 
   beforeEach(async () => {
     jest.clearAllMocks();
@@ -466,27 +466,38 @@ describe('Page Utils - Exported Functions', () => {
     snapshotLatestResponse = module.snapshotLatestResponse;
     snapshotAllResponses = module.snapshotAllResponses;
     countResponseElements = module.countResponseElements;
-    countAnswerContainers = module.countAnswerContainers;
+    snapshotAnswerTexts = module.snapshotAnswerTexts;
   });
 
-  describe('countAnswerContainers', () => {
-    it('should count .to-user-container elements', async () => {
+  describe('snapshotAnswerTexts', () => {
+    function makeContainer(text: string) {
+      return {
+        $: jest.fn().mockResolvedValue({
+          innerText: jest.fn().mockResolvedValue(text),
+        }),
+      };
+    }
+
+    it('counts how many times each answer text occurs, not just which occur', async () => {
       const mockPage = {
-        $$: jest.fn().mockResolvedValue([{}, {}, {}]),
+        $$: jest
+          .fn()
+          .mockResolvedValue([
+            makeContainer('Yes'),
+            makeContainer('Something else'),
+            makeContainer('Yes'),
+          ]),
       };
 
-      const result = await countAnswerContainers(mockPage);
-      expect(result).toBe(3);
+      const result = await snapshotAnswerTexts(mockPage);
       expect(mockPage.$$).toHaveBeenCalledWith('.to-user-container');
+      expect([...result.values()].sort()).toEqual([1, 2]);
     });
 
-    it('should return 0 when the page throws', async () => {
-      const mockPage = {
-        $$: jest.fn().mockRejectedValue(new Error('Page error')),
-      };
-
-      const result = await countAnswerContainers(mockPage);
-      expect(result).toBe(0);
+    it('returns an empty baseline when the page throws', async () => {
+      const mockPage = { $$: jest.fn().mockRejectedValue(new Error('Page error')) };
+      const result = await snapshotAnswerTexts(mockPage);
+      expect(result.size).toBe(0);
     });
   });
 
@@ -781,11 +792,7 @@ describe('Page Utils - Exported Functions', () => {
       expect(result).toBeNull();
     });
 
-    describe('baselineContainerCount (position-based identity)', () => {
-      // Regression test for the hash-collision bug: when a new answer's text
-      // repeats an earlier answer's text (e.g. two questions both answered
-      // "Yes"), text-hash dedup misclassifies the new answer as "already
-      // seen" and the wait times out even though the answer is right there.
+    describe('new-answer identity (content multiplicity, never DOM position)', () => {
       function makeContainer(text: string) {
         return {
           $: jest.fn().mockResolvedValue({
@@ -794,19 +801,18 @@ describe('Page Utils - Exported Functions', () => {
         };
       }
 
-      it('detects a new answer whose text duplicates an earlier answer, by DOM position', async () => {
-        // Two prior answers already say "Yes"; the new (3rd) container also
-        // says "Yes". Hash-based dedup would skip it as "known" — position
-        // must not.
-        const containers = [makeContainer('Yes'), makeContainer('Yes'), makeContainer('Yes')];
-        const mockPage = {
-          $$: jest.fn().mockResolvedValue(containers),
-          waitForTimeout: jest.fn().mockResolvedValue(undefined),
-        };
+      const pageWith = (texts: string[]) => ({
+        $$: jest.fn().mockResolvedValue(texts.map(makeContainer)),
+        waitForTimeout: jest.fn().mockResolvedValue(undefined),
+      });
 
-        const result = await waitForLatestAnswer(mockPage, {
-          ignoreTexts: ['Yes', 'Yes'], // what snapshotAllResponses captured pre-submit
-          baselineContainerCount: 2, // 2 containers existed before the question was asked
+      // Regression, 2.2.0: two questions both answered "Yes". Plain hash dedup
+      // skipped the new answer as "already seen" and timed out after 5 minutes.
+      it('detects a new answer whose text duplicates an earlier one', async () => {
+        const baselineCounts = await snapshotAnswerTexts(pageWith(['Yes', 'Yes']));
+
+        const result = await waitForLatestAnswer(pageWith(['Yes', 'Yes', 'Yes']), {
+          baselineCounts,
           timeoutMs: 500,
           pollIntervalMs: 10,
         });
@@ -814,56 +820,53 @@ describe('Page Utils - Exported Functions', () => {
         expect(result).toBe('Yes');
       });
 
-      it('times out with the same setup when no baseline is given (documents the hash-dedup limitation)', async () => {
-        const containers = [makeContainer('Yes'), makeContainer('Yes'), makeContainer('Yes')];
-        const mockPage = {
-          $$: jest.fn().mockResolvedValue(containers),
-          waitForTimeout: jest.fn().mockResolvedValue(undefined),
-        };
+      // Regression, PR #29: the chat list is virtualized, so the genuinely new
+      // answer can sit in the MIDDLE with older, already-known answers after it.
+      // Any position rule (last container, or index >= baseline count) picks the
+      // wrong one here.
+      it('finds the new answer when it is mounted before older known ones', async () => {
+        const baselineCounts = await snapshotAnswerTexts(
+          pageWith(['Old A', 'Old B', 'Old C', 'Old D'])
+        );
 
-        const result = await waitForLatestAnswer(mockPage, {
-          ignoreTexts: ['Yes', 'Yes', 'Yes'],
-          timeoutMs: 200,
+        const result = await waitForLatestAnswer(
+          pageWith(['Old A', 'Old B', 'BRAND NEW ANSWER', 'Old C', 'Old D']),
+          { baselineCounts, timeoutMs: 500, pollIntervalMs: 10 }
+        );
+
+        expect(result).toBe('BRAND NEW ANSWER');
+      });
+
+      it('returns nothing while no text exceeds the baseline', async () => {
+        const baselineCounts = await snapshotAnswerTexts(pageWith(['Yes', 'Yes']));
+
+        const result = await waitForLatestAnswer(pageWith(['Yes', 'Yes']), {
+          baselineCounts,
+          timeoutMs: 150,
           pollIntervalMs: 50,
         });
 
         expect(result).toBeNull();
       });
 
-      it('does not return a container at or before the baseline', async () => {
-        const containers = [makeContainer('Yes'), makeContainer('Yes')];
-        const mockPage = {
-          $$: jest.fn().mockResolvedValue(containers),
-          waitForTimeout: jest.fn().mockResolvedValue(undefined),
-        };
+      it('takes the last exceeding text when the baseline was incomplete', async () => {
+        const baselineCounts = await snapshotAnswerTexts(pageWith(['Prior answer']));
 
-        const result = await waitForLatestAnswer(mockPage, {
-          baselineContainerCount: 2, // no container has been added past this yet
-          timeoutMs: 100,
-          pollIntervalMs: 50,
-        });
+        const result = await waitForLatestAnswer(
+          pageWith(['Prior answer', 'First new answer', 'Second new answer']),
+          { baselineCounts, timeoutMs: 500, pollIntervalMs: 10 }
+        );
 
-        expect(result).toBeNull();
+        expect(result).toBe('Second new answer');
       });
 
-      it('picks the last container past the baseline when several are new', async () => {
-        const containers = [
-          makeContainer('Prior answer'),
-          makeContainer('First new answer'),
-          makeContainer('Second new answer'),
-        ];
-        const mockPage = {
-          $$: jest.fn().mockResolvedValue(containers),
-          waitForTimeout: jest.fn().mockResolvedValue(undefined),
-        };
-
-        const result = await waitForLatestAnswer(mockPage, {
-          baselineContainerCount: 1,
+      it('still works with no baseline at all (snapshotLatestResponse path)', async () => {
+        const result = await waitForLatestAnswer(pageWith(['Only answer']), {
           timeoutMs: 500,
           pollIntervalMs: 10,
         });
 
-        expect(result).toBe('Second new answer');
+        expect(result).toBe('Only answer');
       });
     });
   });
