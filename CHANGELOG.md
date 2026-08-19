@@ -7,6 +7,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [3.0.2] - 2026-08-19
+
+### Fixed — `--help` started a server instead of printing help (#30)
+
+`notebooklm-mcp --help` booted a full stdio MCP server and stayed alive until
+killed, because the subcommand dispatch added in 3.0.1 matched bare words only
+(`!subcommand.startsWith('-')`), so every flag fell past the dispatch table into
+the server. `help` worked; `--help` could not. Launched from a terminal, stdin
+never reaches EOF, so nothing shut the stray server down.
+
+- **`--help` / `-h` and `--version` / `-v`** are handled before the subcommand
+  table and exit; an unknown subcommand still exits 1.
+- **An unrecognised flag no longer passes silently** — it is reported on stderr
+  and the server still starts, since MCP clients sometimes append flags of their
+  own and aborting would break them. Warnings stay on stderr; stdout is the
+  JSON-RPC channel.
+- **Help text now documents the installed-binary commands**, not only the
+  `npm run` forms that apply to a cloned repo.
+
+### Fixed — Docker image failed to start when built from a Windows clone
+
+The image runs `scripts/docker-entrypoint.sh` as its CMD. Cloned with
+`core.autocrlf=true` (the Git for Windows default), the script was checked out
+with CRLF, the kernel read the shebang as `/bin/bash\r`, and the container died
+immediately with `exec: /app/scripts/docker-entrypoint.sh: not found` (exit 127).
+A `.gitattributes` now pins `*.sh` to LF at checkout on every platform.
+
+---
+
 ## [3.0.1] - 2026-08-06
 
 ### Fixed — interactive Google login on global installs / stdio clients (#27)
