@@ -7,6 +7,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [3.0.4] - 2026-08-19
+
+### Fixed — the RPC transport was silently dead since the rebrand
+
+Every RPC call reported `Not authenticated — session expired` on a perfectly
+valid session and fell back to the DOM scrape, so **the headline feature of
+3.0.0 — driving NotebookLM's internal `batchexecute` API, 10-100x faster than
+scraping — has been inert**. The dual-transport design masked it completely:
+answers stayed correct, only slower, so nothing looked broken from outside.
+
+Cause: the July 2026 rebrand moved accounts to `notebook.google.com`, but the
+client collected its cookie jar for `notebooklm.google.com` and talked to that
+host, which answers a logged-out homepage for such an account. The jar and the
+target host have to match.
+
+Fixed by trying `notebook.google.com` first and falling back to the legacy host
+for tenants still served there, keeping whichever bootstraps. Verified live on
+an authenticated account: `notebook_list` logged `RPC list failed … falling
+back to DOM scrape` before, and `RPC transport bootstrapped` with no fallback
+after.
+
+Anyone on 3.0.0-3.0.3 has been running the browser path for every operation.
+This restores the advertised performance with no configuration change.
+
+---
+
 ## [3.0.3] - 2026-08-19
 
 ### Fixed — wrong answer returned in long conversations (virtualized chat list)
