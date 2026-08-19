@@ -849,22 +849,39 @@ async function main() {
   // matching CLI so global-install users can run the interactive login in a
   // terminal instead of through the in-client tool (which the client's
   // tool-call timeout kills mid-login). See issue #27.
-  const subcommand = process.argv[2];
-  if (subcommand && !subcommand.startsWith('-')) {
+  // Flags are handled before subcommands: `--help` used to fall straight
+  // through and boot a full stdio server that then sat there indefinitely,
+  // because the guard below only ever matched bare words. See issue #30.
+  const arg = process.argv[2];
+  if (arg === '--help' || arg === '-h' || arg === 'help') {
+    await import('./cli/help.js');
+    return;
+  }
+  if (arg === '--version' || arg === '-v') {
+    console.log(SERVER_VERSION);
+    return;
+  }
+  if (arg && !arg.startsWith('-')) {
     const cliModules: Record<string, string> = {
       'setup-auth': './cli/setup-auth.js',
       'de-auth': './cli/de-auth.js',
       accounts: './cli/accounts.js',
-      help: './cli/help.js',
     };
-    const cliModule = cliModules[subcommand];
+    const cliModule = cliModules[arg];
     if (cliModule) {
       await import(cliModule); // each CLI runs its own main() on import
       return;
     }
-    console.error(`Unknown command: ${subcommand}`);
-    console.error(`Available commands: ${Object.keys(cliModules).join(', ')}`);
+    console.error(`Unknown command: ${arg}`);
+    console.error(`Available commands: ${Object.keys(cliModules).join(', ')}, help`);
+    console.error('Flags: --help, --version');
     process.exit(1);
+  }
+  if (arg) {
+    // An unrecognised flag must be reported, but must not abort: MCP clients
+    // sometimes append flags of their own. Warn on stderr only — stdout is the
+    // JSON-RPC channel and has to stay clean.
+    console.error(`Unrecognised option "${arg}" ignored. Run with --help for usage.`);
   }
 
   // Print banner

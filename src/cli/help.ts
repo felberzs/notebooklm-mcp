@@ -8,6 +8,16 @@ console.log(`
   NotebookLM MCP Server - Commands
 ==========================================
 
+USAGE (installed binary — npx or global install):
+  notebooklm-mcp              Start the MCP server on stdio (how MCP clients spawn it)
+  notebooklm-mcp setup-auth   Google login in your terminal (no client timeout)
+  notebooklm-mcp de-auth      Clear authentication
+  notebooklm-mcp accounts     Manage stored accounts
+  notebooklm-mcp --help       Show this help
+  notebooklm-mcp --version    Print the version
+
+The commands below are for a cloned repository, not a global install.
+
 AUTHENTICATION:
   npm run setup-auth     Setup Google authentication (opens browser)
   npm run de-auth        Clear authentication (logout)
