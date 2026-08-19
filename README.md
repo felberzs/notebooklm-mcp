@@ -67,6 +67,25 @@ NotebookLM is a **grounded** engine: Gemini reads your sources and answers _from
 
 ---
 
+## In the Wild
+
+Real deployments, not hypotheticals.
+
+- **📚 A doctoral literature review at batch scale** — The project was built for, and is
+  continuously tested on, overnight runs of **1 000+ research questions** spread across
+  several notebooks: multi-account rotation picks up when a daily quota runs out, every
+  answer is written to disk with its citations, and an interrupted run resumes instead of
+  starting over. The batch pattern in [`vault_batch`](#features) exists because a thesis
+  needed it.
+
+- **🔌 Replacing a RAG engine with the REST API** — [`musnymubarak/Calim_Doc`](https://github.com/musnymubarak/Calim_Doc)
+  swapped a Gemini-based retrieval engine for this project's HTTP API, running it as a
+  Docker service (`notebooklm:3000`) behind a full client and worker layer. A good
+  illustration of the REST half: no agent runtime, no MCP client — NotebookLM simply
+  became a backend service their Python app calls.
+
+Built something with it? Open an issue — this section is for other people's work.
+
 ## Features
 
 ### Q&A with Citations
