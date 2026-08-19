@@ -20,6 +20,18 @@
 
 ---
 
+> **⚠️ Unofficial — use at your own risk**
+>
+> This project drives **undocumented Google endpoints** (the same `batchexecute`
+> API the web app calls) with a browser fallback. It is **not affiliated with
+> Google**, endpoints can change without notice, and heavy usage may be rate
+> limited.
+>
+> Use a **dedicated Google account** for automation. Best suited to research,
+> prototypes and personal projects. See [Disclaimer](#disclaimer) for the full text.
+
+---
+
 ## What You Can Build
 
 🔗 **No-code automation pipelines** — The 33-endpoint REST API means NotebookLM becomes a step in n8n, Zapier, Make, or a plain `curl` in cron. No agent, no MCP client, no Node in your stack — just HTTP. This is the half most NotebookLM libraries don't have.
