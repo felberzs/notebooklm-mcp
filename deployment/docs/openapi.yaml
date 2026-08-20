@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: NotebookLM REST API
-  version: 1.5.9
+  version: 3.1.0
   description: |
     Local HTTP REST API for Google NotebookLM. Citation-backed Q&A, Studio
     content generation (audio, video, infographic, report, presentation,
@@ -38,6 +38,13 @@ tags:
   - name: Sessions
 
 paths:
+  /:
+    get:
+      tags: [Health]
+      summary: Server identity, version, and a pointer to the docs
+      responses:
+        '200': { description: Server descriptor }
+
   /health:
     get:
       tags: [Health]
@@ -319,6 +326,166 @@ paths:
       responses:
         '200': { description: Deleted }
 
+  /notebooks/{id}/sources:
+    get:
+      tags: [Sources]
+      summary: List a notebook's sources with their ids and titles
+      description: |
+        RPC-backed (no browser). Returns `{ notebookId, count, sources: [{ id, title }] }`.
+        This is where the source ids for `/notebooks/{id}/sources/{sourceId}` come from.
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+      responses:
+        '200': { description: Source list }
+
+  /notebooks/{id}/sources/{sourceId}:
+    get:
+      tags: [Sources]
+      summary: Read a source's full indexed text
+      description: |
+        RPC-backed (no browser). Returns the exact content NotebookLM reasons
+        over — the whole document, which may be very large; `charCount` is
+        reported alongside it. The `html` rendition preserves structure but
+        inlines images as base64 data URIs and is markedly bigger.
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+        - in: path
+          name: sourceId
+          required: true
+          schema: { type: string }
+        - in: query
+          name: format
+          required: false
+          schema: { type: string, enum: [text, html], default: text }
+      responses:
+        '200':
+          { description: 'Source content: { id, title, content, charCount, notebookId, format }' }
+
+  /notebooks/{id}/share:
+    get:
+      tags: [Notebooks]
+      summary: Read a notebook's sharing status
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+      responses:
+        '200': { description: Sharing status }
+    put:
+      tags: [Notebooks]
+      summary: Toggle the public link
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                public: { type: boolean }
+              required: [public]
+      responses:
+        '200': { description: Sharing status after the change }
+
+  /notebooks/{id}/labels:
+    get:
+      tags: [Notebooks]
+      summary: List a notebook's source labels
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+      responses:
+        '200': { description: Label list }
+    post:
+      tags: [Notebooks]
+      summary: Create or delete source labels
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                action: { type: string, enum: [list, create, delete] }
+                name: { type: string }
+                emoji: { type: string }
+                label_ids: { type: array, items: { type: string } }
+      responses:
+        '200': { description: Labels after the change }
+
+  /content/study-aid:
+    post:
+      tags: [Content]
+      summary: Generate a study aid (flashcards or quiz)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                notebook_id: { type: string }
+                notebook_url: { type: string }
+                kind: { type: string, enum: [flashcards, quiz] }
+                focus: { type: string }
+              required: [kind]
+      responses:
+        '200': { description: Generation result }
+
+  /content/mind-map:
+    post:
+      tags: [Content]
+      summary: Generate and save a mind map
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                notebook_id: { type: string }
+                notebook_url: { type: string }
+                title: { type: string }
+      responses:
+        '200': { description: Generation result }
+
+  /content/research:
+    post:
+      tags: [Content]
+      summary: Discover web sources for a notebook (Fast Research), optionally importing them
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                notebook_id: { type: string }
+                notebook_url: { type: string }
+                query: { type: string }
+                import: { type: boolean }
+              required: [query]
+      responses:
+        '200': { description: Discovered sources }
+
   /content/generate:
     post:
       tags: [Content]
@@ -375,6 +542,68 @@ paths:
           schema: { type: string }
       responses:
         '200': { description: Note converted to source }
+
+  /batch-to-vault:
+    post:
+      tags: [Q&A]
+      summary: Run a batch of questions and write each answer to a vault directory
+      description: |
+        Long-running: one NotebookLM answer per question, written as a markdown
+        file conforming to the `nblm-answer-v1` schema. Size the client timeout
+        accordingly (and the reverse-proxy read timeout, if any).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                questions: { type: array, items: { type: string } }
+                notebook_id: { type: string }
+                notebook_url: { type: string }
+                vault_dir: { type: string }
+                slug_prefix: { type: string }
+                source_format: { type: string, enum: [none, inline, footnotes, json, expanded] }
+                sleep_between_ms: { type: integer }
+                session_id: { type: string }
+              required: [questions]
+      responses:
+        '200': { description: Batch result, one entry per question }
+
+  /content/notes/list:
+    post:
+      tags: [Content]
+      summary: List the notebook's notes
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                notebook_url: { type: string }
+                session_id: { type: string }
+      responses:
+        '200': { description: Note list }
+
+  /content/notes/get:
+    post:
+      tags: [Content]
+      summary: Read one note's content, by title or id
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                note_title: { type: string }
+                note_id: { type: string }
+                notebook_url: { type: string }
+                session_id: { type: string }
+      responses:
+        '200': { description: Note content }
+        '400': { description: Neither note_title nor note_id was given }
 
   /cleanup-data:
     post:

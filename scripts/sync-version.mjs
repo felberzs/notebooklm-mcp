@@ -4,6 +4,9 @@
  *   - .claude-plugin/plugin.json   (Claude Code plugin manifest)
  *   - website/docusaurus.config.ts (schema.org softwareVersion)
  *   - README.md                    (hero "v1.x.x — ..." line)
+ *   - server.json                  (MCP Registry manifest, two fields)
+ *   - deployment/docs/openapi.yaml (REST spec info.version)
+ *   - ROADMAP.md                   ("## Current Version" header)
  *
  * Usage:
  *   node scripts/sync-version.mjs           # rewrite drifted files in place
@@ -55,17 +58,12 @@ const targets = [
   {
     path: 'website/docusaurus.config.ts',
     label: 'docusaurus softwareVersion',
-    transform: (s) =>
-      s.replace(
-        /softwareVersion:\s*'[^']+'/,
-        `softwareVersion: '${VERSION}'`
-      ),
+    transform: (s) => s.replace(/softwareVersion:\s*'[^']+'/, `softwareVersion: '${VERSION}'`),
   },
   {
     path: 'README.md',
     label: 'README hero version',
-    transform: (s) =>
-      s.replace(/(>\s*v)\d+\.\d+\.\d+(\s+—)/, `$1${VERSION}$2`),
+    transform: (s) => s.replace(/(>\s*v)\d+\.\d+\.\d+(\s+—)/, `$1${VERSION}$2`),
   },
   {
     path: 'server.json',
@@ -74,16 +72,22 @@ const targets = [
     // package.json, or the published registry entry drifts (it sat at 1.5.9
     // while the package shipped 3.0.0). Global replace hits both; the "$schema"
     // URL has no "version" key so it is untouched.
-    transform: (s) =>
-      s.replace(/("version":\s*)"\d+\.\d+\.\d+"/g, `$1"${VERSION}"`),
+    transform: (s) => s.replace(/("version":\s*)"\d+\.\d+\.\d+"/g, `$1"${VERSION}"`),
+  },
+  {
+    path: 'deployment/docs/openapi.yaml',
+    label: 'OpenAPI info.version',
+    // The published REST spec carries its own version and had drifted to
+    // 1.5.9 while the package shipped 3.0.x — consumers generating a client
+    // from it were told they were on a two-major-versions-old API.
+    transform: (s) => s.replace(/(^info:\n(?:.*\n)*?  version:\s*)\d+\.\d+\.\d+/m, `$1${VERSION}`),
   },
   {
     path: 'ROADMAP.md',
     label: 'ROADMAP current version',
     // The "## Current Version" header drifted to 1.5.4 while the package shipped
     // 3.0.x. Kept in lockstep here (and enforced by version:check in CI).
-    transform: (s) =>
-      s.replace(/(## Current Version:\s*v)\d+\.\d+\.\d+/, `$1${VERSION}`),
+    transform: (s) => s.replace(/(## Current Version:\s*v)\d+\.\d+\.\d+/, `$1${VERSION}`),
   },
 ];
 
