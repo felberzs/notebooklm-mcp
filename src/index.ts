@@ -536,6 +536,24 @@ class NotebookLMMCPServer {
             );
             break;
 
+          case 'list_sources':
+            result = await this.toolHandlers.handleListSources(
+              args as { notebook_url?: string; notebook_id?: string }
+            );
+            break;
+
+          case 'read_source':
+            result = await this.toolHandlers.handleReadSource(
+              args as {
+                source_id?: string;
+                source_name?: string;
+                notebook_url?: string;
+                notebook_id?: string;
+                format?: 'text' | 'html';
+              }
+            );
+            break;
+
           case 'generate_content':
             result = await this.toolHandlers.handleGenerateContent(
               args as {

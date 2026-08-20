@@ -36,6 +36,8 @@ export const LEGACY_TO_CANONICAL: Record<string, string> = {
   // source_* — notebook sources
   add_source: 'source_add',
   delete_source: 'source_delete',
+  list_sources: 'source_list',
+  read_source: 'source_read',
   // content_* — generated Studio content
   generate_content: 'content_generate',
   list_content: 'content_list',

@@ -21,6 +21,12 @@ import { StartupManager } from './startup/startup-manager.js';
 import { isNotebookHost } from './utils/notebook-domain.js';
 import { log } from './utils/logger.js';
 
+const SERVER_VERSION = (
+  JSON.parse(
+    readFileSync(join(dirname(fileURLToPath(import.meta.url)), '..', 'package.json'), 'utf-8')
+  ) as { version: string }
+).version;
+
 // Extend Express Request to include requestId
 declare global {
   // eslint-disable-next-line @typescript-eslint/no-namespace
@@ -64,16 +70,22 @@ const toolHandlers = new ToolHandlers(sessionManager, authManager, library);
 app.get('/', (_req: Request, res: Response) => {
   res.json({
     name: 'NotebookLM MCP HTTP Server',
-    version: process.env.npm_package_version || '1.5.2',
+    // Read from package.json, not `npm_package_version`: that variable only
+    // exists when the server is started through an npm script, so a plain
+    // `node dist/http-wrapper.js` used to report the hardcoded fallback —
+    // which had been stale since 1.5.2.
+    version: SERVER_VERSION,
     endpoints: {
       health: 'GET /health',
       ask: 'POST /ask',
       batch_to_vault: 'POST /batch-to-vault',
       setup_auth: 'POST /setup-auth',
       notebooks: 'GET /notebooks',
+      sources: 'GET /notebooks/:id/sources',
+      read_source: 'GET /notebooks/:id/sources/:sourceId',
       sessions: 'GET /sessions',
     },
-    docs: 'https://github.com/carterlasalle/notebooklm-mcp',
+    docs: 'https://roomi-fields.github.io/notebooklm-mcp/',
   });
 });
 
@@ -727,6 +739,34 @@ app.post('/notebooks/:id/labels', async (req: Request, res: Response) => {
         name,
         emoji,
         label_ids,
+      })
+    );
+  } catch (error) {
+    res
+      .status(500)
+      .json({ success: false, error: error instanceof Error ? error.message : String(error) });
+  }
+});
+
+// List a notebook's sources with their IDs — RPC extension.
+app.get('/notebooks/:id/sources', async (req: Request, res: Response) => {
+  try {
+    res.json(await toolHandlers.handleListSources({ notebook_id: req.params.id }));
+  } catch (error) {
+    res
+      .status(500)
+      .json({ success: false, error: error instanceof Error ? error.message : String(error) });
+  }
+});
+
+// Read a source's full indexed text — RPC extension. `?format=text|html`.
+app.get('/notebooks/:id/sources/:sourceId', async (req: Request, res: Response) => {
+  try {
+    res.json(
+      await toolHandlers.handleReadSource({
+        notebook_id: req.params.id,
+        source_id: req.params.sourceId,
+        format: req.query.format === 'html' ? 'html' : 'text',
       })
     );
   } catch (error) {

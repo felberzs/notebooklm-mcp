@@ -13,6 +13,31 @@ export interface RpcSource {
   title: string;
 }
 
+/** A source's full indexed content, as returned by {@link SourcesRpc.getSourceFulltext}. */
+export interface SourceFulltext {
+  id: string;
+  title: string;
+  content: string;
+  charCount: number;
+}
+
+/**
+ * Flatten a document tree to its text leaves, in traversal order.
+ *
+ * Whitespace-only leaves are dropped: the tree carries a fair number of them
+ * and, once the leaves are newline-joined, each one would show up as a blank
+ * line. Leaves that do carry text are kept verbatim, spacing included — this
+ * is a source's exact indexed content, so it is not ours to tidy up.
+ * Depth is bounded so a malformed (or cyclic-looking) payload cannot hang.
+ */
+function collectStrings(node: unknown, depth = 0): string[] {
+  if (typeof node === 'string') return node.trim() ? [node] : [];
+  if (!Array.isArray(node) || depth > 100) return [];
+  const out: string[] = [];
+  for (const child of node) out.push(...collectStrings(child, depth + 1));
+  return out;
+}
+
 /** Parse the source-creation result: `result[0][0]` → `[0][0]`=id, `[1]`=title. */
 function parseSourceResult(result: unknown): RpcSource | null {
   const list = Array.isArray(result) ? (result[0] as unknown) : undefined;
@@ -76,6 +101,51 @@ export class SourcesRpc {
     const params = [[sourceData], notebookId, [2], CREATE_TAIL];
     const result = await this.client.call('ADD_SOURCE', params, `/notebook/${notebookId}`);
     return parseSourceResult(result);
+  }
+
+  /**
+   * Read a source's indexed content — the text NotebookLM actually reasons
+   * over, which the web UI never lets you see in full.
+   *
+   * Called with the bare id, `GET_SOURCE` answers with metadata only; the two
+   * trailing render selectors are what request the content itself — `[2]` for
+   * the plain-text rendition, `[3]` for the HTML one. The envelope is
+   * `[descriptor, ?, ?, textBlock, htmlBlock]`: the title sits at
+   * `descriptor[1]`, the HTML is the plain string `result[4][1]`, and the text
+   * lives under `result[3][0]` as a structured document tree, so its strings
+   * are collected in traversal order and newline-joined (offsets are lost —
+   * that is inherent to flattening, not a shortcut).
+   *
+   * The selectors and envelope positions were read from teng-lin/notebooklm-py
+   * (MIT), which documents this endpoint; the code here is our own.
+   */
+  async getSourceFulltext(
+    notebookId: string,
+    sourceId: string,
+    format: 'text' | 'html' = 'text'
+  ): Promise<SourceFulltext | null> {
+    const selector = format === 'html' ? 3 : 2;
+    const result = await this.client.call(
+      'GET_SOURCE',
+      [[sourceId], [selector], [selector]],
+      `/notebook/${notebookId}`
+    );
+    if (!Array.isArray(result)) return null;
+
+    const descriptor = Array.isArray(result[0]) ? (result[0] as unknown[]) : undefined;
+    const title = typeof descriptor?.[1] === 'string' ? (descriptor[1] as string) : '';
+
+    let content = '';
+    if (format === 'html') {
+      const block = Array.isArray(result[4]) ? (result[4] as unknown[]) : undefined;
+      content = typeof block?.[1] === 'string' ? (block[1] as string) : '';
+    } else {
+      const doc = Array.isArray(result[3]) ? (result[3] as unknown[]) : undefined;
+      const body = Array.isArray(doc?.[0]) ? (doc[0] as unknown[]) : undefined;
+      content = body ? collectStrings(body).join('\n') : '';
+    }
+    if (!content) return null;
+    return { id: sourceId, title, content, charCount: content.length };
   }
 
   /** Delete a source from a notebook. */

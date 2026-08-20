@@ -1,4 +1,4 @@
-# NotebookLM REST API reference — 33 HTTP endpoints
+# NotebookLM REST API reference — 44 HTTP endpoints
 
 > Complete reference for the NotebookLM HTTP REST API. Citation-backed Q&A,
 > Studio content generation, notebook library, multi-account, sessions.
@@ -23,7 +23,7 @@ Or for network access: `http://<SERVER-IP>:3000`
 
 ---
 
-## Available Endpoints (33 total)
+## Available Endpoints (44 total)
 
 ### Authentication
 
@@ -36,10 +36,12 @@ Or for network access: `http://<SERVER-IP>:3000`
 
 ### Queries
 
-| Method | Endpoint  | Description                  |
-| ------ | --------- | ---------------------------- |
-| `GET`  | `/health` | Server health check          |
-| `POST` | `/ask`    | Ask a question to NotebookLM |
+| Method | Endpoint          | Description                                        |
+| ------ | ----------------- | -------------------------------------------------- |
+| `GET`  | `/`               | Server identity, version, docs link                |
+| `GET`  | `/health`         | Server health check                                |
+| `POST` | `/ask`            | Ask a question to NotebookLM                       |
+| `POST` | `/batch-to-vault` | Run many questions, write each answer to the vault |
 
 ### Notebooks
 
@@ -57,6 +59,10 @@ Or for network access: `http://<SERVER-IP>:3000`
 | `PUT`    | `/notebooks/:id`                | Update notebook metadata             |
 | `DELETE` | `/notebooks/:id`                | Delete a notebook                    |
 | `PUT`    | `/notebooks/:id/activate`       | Activate a notebook (set as default) |
+| `GET`    | `/notebooks/:id/share`          | Read sharing status                  |
+| `PUT`    | `/notebooks/:id/share`          | Toggle the public link               |
+| `GET`    | `/notebooks/:id/labels`         | List source labels                   |
+| `POST`   | `/notebooks/:id/labels`         | Create or delete source labels       |
 
 ### Sessions
 
@@ -79,6 +85,13 @@ Or for network access: `http://<SERVER-IP>:3000`
 | `POST`   | `/content/chat-to-note`           | Save chat discussion to a note                |
 | `POST`   | `/content/notes/:title/to-source` | Convert note to source                        |
 | `GET`    | `/content`                        | List sources and generated content            |
+| `GET`    | `/notebooks/:id/sources`          | List a notebook's sources with their IDs      |
+| `GET`    | `/notebooks/:id/sources/:sid`     | Read a source's full indexed text             |
+| `POST`   | `/content/notes/list`             | List the notebook's notes                     |
+| `POST`   | `/content/notes/get`              | Read one note, by title or ID                 |
+| `POST`   | `/content/study-aid`              | Generate flashcards or a quiz                 |
+| `POST`   | `/content/mind-map`               | Generate and save a mind map                  |
+| `POST`   | `/content/research`               | Discover web sources (Fast Research)          |
 
 > **Note:** v1.5.0 consolidated content generation into `/content/generate` with all NotebookLM Studio features (audio_overview, video, infographic, report, presentation, data_table).
 
@@ -1738,6 +1751,95 @@ curl -X POST http://localhost:3000/notebooks/import-from-scrape \
 - Initial library setup: import all existing notebooks at once
 - Sync new notebooks: re-run to import newly created notebooks
 - Selective import: use `notebook_ids` to import specific notebooks only
+
+---
+
+## 25. List a Notebook's Sources
+
+### `GET /notebooks/:id/sources`
+
+Returns every source in the notebook with its ID and title. This is where the
+source IDs used by `GET /notebooks/:id/sources/:sourceId` and
+`DELETE /content/sources/:id` come from.
+
+RPC-backed: no browser is started, and a 150-source notebook answers in about a
+second.
+
+**Example:**
+
+```bash
+curl http://localhost:3000/notebooks/74912e55-34a4-4027-bdcc-8e89badd0efd/sources
+```
+
+**Response:**
+
+```json
+{
+  "success": true,
+  "data": {
+    "notebookId": "74912e55-34a4-4027-bdcc-8e89badd0efd",
+    "count": 153,
+    "sources": [
+      {
+        "id": "c3ae2b1b-b362-46ae-9dc8-7b658a05955e",
+        "title": "A Guide to Non-violent Communication - CultureAlly"
+      }
+    ]
+  }
+}
+```
+
+---
+
+## 26. Read a Source's Full Text
+
+### `GET /notebooks/:id/sources/:sourceId`
+
+Returns the exact text NotebookLM indexed for that source — the content it
+reasons over, which the web UI only ever shows you in fragments. Use it to quote
+a source verbatim, to check what was really extracted from a PDF or a web page,
+or to hand the raw material to another tool.
+
+**Query parameters:**
+
+| Parameter | Values           | Default | Description                                                          |
+| --------- | ---------------- | ------- | -------------------------------------------------------------------- |
+| `format`  | `text` \| `html` | `text`  | `html` keeps headings, lists and links, but inlines images as base64 |
+
+**Two things to know before calling it:**
+
+- **It returns the whole document.** `charCount` is in the response so you can
+  decide what to do with it; a book-length PDF can run to hundreds of thousands
+  of characters.
+- **`html` is much bigger than `text`** — images are embedded as base64 data
+  URIs, so the same PDF came back at 158 KB as text and 166 KB as HTML, most of
+  the difference being image payload.
+
+**Example:**
+
+```bash
+curl "http://localhost:3000/notebooks/74912e55-.../sources/c3ae2b1b-...?format=text"
+```
+
+**Response:**
+
+```json
+{
+  "success": true,
+  "data": {
+    "id": "c3ae2b1b-b362-46ae-9dc8-7b658a05955e",
+    "title": "A Guide to Non-violent Communication - CultureAlly",
+    "content": "A Guide to Non-violent Communication\n...",
+    "charCount": 16520,
+    "notebookId": "74912e55-34a4-4027-bdcc-8e89badd0efd",
+    "format": "text"
+  }
+}
+```
+
+The MCP equivalents are `source_list` and `source_read`; `source_read` also
+accepts `source_name` instead of an ID, and refuses to guess when the name
+matches more than one source.
 
 ---
 

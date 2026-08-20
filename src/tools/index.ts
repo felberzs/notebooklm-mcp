@@ -53,7 +53,7 @@ import { randomDelay } from '../utils/stealth-utils.js';
 import type { Page } from 'patchright';
 import { BatchExecuteClient } from '../rpc/batchexecute.js';
 import { NotebookRpc } from '../rpc/notebooks-rpc.js';
-import { SourcesRpc } from '../rpc/sources-rpc.js';
+import { SourcesRpc, type RpcSource, type SourceFulltext } from '../rpc/sources-rpc.js';
 import { QueryRpc } from '../rpc/query-rpc.js';
 import { StudioRpc, type StudioType } from '../rpc/studio-rpc.js';
 import { SharingRpc, type ShareStatus } from '../rpc/sharing-rpc.js';
@@ -327,6 +327,18 @@ const TOOL_ANNOTATIONS: Record<string, NonNullable<Tool['annotations']>> = {
     readOnlyHint: false,
     destructiveHint: true,
     idempotentHint: false,
+    openWorldHint: true,
+  },
+  list_sources: {
+    title: 'List notebook sources',
+    readOnlyHint: true,
+    idempotentHint: true,
+    openWorldHint: true,
+  },
+  read_source: {
+    title: 'Read a source’s full text',
+    readOnlyHint: true,
+    idempotentHint: true,
     openWorldHint: true,
   },
   generate_content: {
@@ -1146,6 +1158,65 @@ User: "Yes" → call remove_notebook`,
           session_id: {
             type: 'string',
             description: 'Session ID to reuse an existing session',
+          },
+        },
+      },
+    },
+    {
+      name: 'list_sources',
+      description:
+        'List the sources of a NotebookLM notebook, with their IDs and titles.\n\n' +
+        'Use this to get the source_id that read_source and delete_source expect. ' +
+        'RPC-backed (no browser).',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          notebook_url: {
+            type: 'string',
+            description: 'Notebook URL. If not provided, uses the active notebook.',
+          },
+          notebook_id: {
+            type: 'string',
+            description: 'Notebook UUID (alternative to notebook_url).',
+          },
+        },
+      },
+    },
+    {
+      name: 'read_source',
+      description:
+        'Read a source’s full indexed content — the exact text NotebookLM reasons over, ' +
+        'which the web UI only ever shows in fragments.\n\n' +
+        'Use it to quote a source verbatim, to check what was actually ingested from a PDF ' +
+        'or web page, or to feed the raw material to another tool. ' +
+        'Identify the source by source_id (from list_sources) or by source_name (partial match).\n\n' +
+        'Returns the whole document, which can be very long: char_count is reported so you can ' +
+        'decide before spending context. RPC-backed (no browser).',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          source_id: {
+            type: 'string',
+            description: 'The unique ID of the source to read (see list_sources).',
+          },
+          source_name: {
+            type: 'string',
+            description: 'The title of the source to read (partial, case-insensitive match).',
+          },
+          notebook_url: {
+            type: 'string',
+            description: 'Notebook URL. If not provided, uses the active notebook.',
+          },
+          notebook_id: {
+            type: 'string',
+            description: 'Notebook UUID (alternative to notebook_url).',
+          },
+          format: {
+            type: 'string',
+            enum: ['text', 'html'],
+            description:
+              'text (default) = the plain-text rendition. html = the HTML rendition, ' +
+              'which keeps headings, lists and links but is bulkier.',
           },
         },
       },
@@ -3178,6 +3249,96 @@ export class ToolHandlers {
         success: false,
         error: errorMessage,
       };
+    }
+  }
+
+  /**
+   * List a notebook's sources (id + title) — RPC-only.
+   *
+   * There is no DOM fallback on purpose: scraping the source panel yields
+   * titles without ids, which is precisely what makes it useless for feeding
+   * `read_source` / `delete_source`.
+   */
+  async handleListSources(args: {
+    notebook_url?: string;
+    notebook_id?: string;
+  }): Promise<ToolResult<{ notebookId: string; count: number; sources: RpcSource[] }>> {
+    log.info(`🔧 [TOOL] list_sources called`);
+    try {
+      const notebookId = this.resolveNotebookId(args.notebook_url, args.notebook_id);
+      if (!notebookId) {
+        return { success: false, error: 'No notebook specified (notebook_url or notebook_id)' };
+      }
+      const sources = await new NotebookRpc(await this.getRpcClient()).getSources(notebookId);
+      log.success(`  ✅ (RPC) ${sources.length} source(s)`);
+      return { success: true, data: { notebookId, count: sources.length, sources } };
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error);
+      log.error(`❌ [TOOL] list_sources failed: ${msg}`);
+      return { success: false, error: msg };
+    }
+  }
+
+  /**
+   * Read a source's full indexed text — RPC-only (the DOM never exposes it).
+   *
+   * `source_name` is resolved against the notebook's source list first, so a
+   * caller can name a source instead of carrying its UUID around. An ambiguous
+   * name is an error rather than a guess: reading the wrong source silently is
+   * worse than asking again.
+   */
+  async handleReadSource(args: {
+    source_id?: string;
+    source_name?: string;
+    notebook_url?: string;
+    notebook_id?: string;
+    format?: 'text' | 'html';
+  }): Promise<ToolResult<SourceFulltext & { notebookId: string; format: string }>> {
+    log.info(`🔧 [TOOL] read_source called`);
+    try {
+      if (!args.source_id && !args.source_name) {
+        return { success: false, error: 'Either source_id or source_name is required' };
+      }
+      const format = args.format === 'html' ? 'html' : 'text';
+      const notebookId = this.resolveNotebookId(args.notebook_url, args.notebook_id);
+      if (!notebookId) {
+        return { success: false, error: 'No notebook specified (notebook_url or notebook_id)' };
+      }
+
+      const client = await this.getRpcClient();
+      let sourceId = args.source_id;
+      if (!sourceId) {
+        const needle = args.source_name!.toLowerCase();
+        const sources = await new NotebookRpc(client).getSources(notebookId);
+        const matches = sources.filter((s) => s.title.toLowerCase().includes(needle));
+        if (matches.length === 0) {
+          return { success: false, error: `No source matching "${args.source_name}"` };
+        }
+        if (matches.length > 1) {
+          // Name a handful so the caller can refine, but never the whole list:
+          // a 150-source notebook would answer an ambiguous name with an error
+          // bigger than the document it was asked to read.
+          const shown = matches.slice(0, 5).map((m) => m.title);
+          const rest = matches.length - shown.length;
+          const titles = shown.join(', ') + (rest > 0 ? `, and ${rest} more` : '');
+          return {
+            success: false,
+            error: `"${args.source_name}" matches ${matches.length} sources (${titles}) — pass source_id (see list_sources)`,
+          };
+        }
+        sourceId = matches[0].id;
+      }
+
+      const fulltext = await new SourcesRpc(client).getSourceFulltext(notebookId, sourceId, format);
+      if (!fulltext) {
+        return { success: false, error: `Source ${sourceId} returned no ${format} content` };
+      }
+      log.success(`  ✅ (RPC) read ${fulltext.charCount} chars from "${fulltext.title}"`);
+      return { success: true, data: { ...fulltext, notebookId, format } };
+    } catch (error) {
+      const msg = error instanceof Error ? error.message : String(error);
+      log.error(`❌ [TOOL] read_source failed: ${msg}`);
+      return { success: false, error: msg };
     }
   }
 
