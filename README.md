@@ -20,15 +20,16 @@
 
 ---
 
-> **⚠️ Unofficial — use at your own risk**
+> **Unofficial project — good to know before you start**
 >
-> This project drives **undocumented Google endpoints** (the same `batchexecute`
-> API the web app calls) with a browser fallback. It is **not affiliated with
-> Google**, endpoints can change without notice, and heavy usage may be rate
-> limited.
+> This is not affiliated with Google. It talks to the same `batchexecute`
+> endpoints the NotebookLM web app uses, with a browser fallback when they move.
+> They are undocumented, so they can change without notice — when that happens we
+> ship a fix, as we have for every change so far.
 >
-> Use a **dedicated Google account** for automation. Best suited to research,
-> prototypes and personal projects. See [Disclaimer](#disclaimer) for the full text.
+> Two practical notes: use a **dedicated Google account** for automation, and
+> expect NotebookLM's own quotas to apply at high volume. See
+> [Disclaimer](#disclaimer) for the full text.
 
 ---
 
@@ -125,7 +126,7 @@ Flashcards and quizzes are generated via `generate_study_aid`; mind maps via `ge
 
 - **Add sources**: Files (PDF, TXT, DOCX), URLs, Text, YouTube videos, Google Drive
 - **List sources**: Every source with its ID and title (`source_list`)
-- **Read a source in full** (`source_read`): the exact text NotebookLM indexed — what it actually reasons over, which the web UI only shows in fragments. Quote a source verbatim, check what a PDF really yielded, or hand the raw material to another tool. Name the source instead of its ID if you prefer; an ambiguous name is refused rather than guessed.
+- **Read a source in full** (`source_read`): the exact text NotebookLM indexed — what it actually reasons over, which the web UI only shows in fragments. Quote a source verbatim, check what a PDF really yielded, or hand the raw material to another tool. Name the source instead of its ID if you prefer; an ambiguous name is refused rather than guessed. Long sources arrive **one page at a time**, with an explicit instruction for fetching the next — or `paginate: false` for the whole document at once.
 
 ### Notebook Library
 
