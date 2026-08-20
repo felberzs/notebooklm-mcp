@@ -7,6 +7,52 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [3.1.0] - 2026-08-20
+
+### Added — read what NotebookLM actually indexed (`source_list`, `source_read`)
+
+Two new tools, both RPC-backed (no browser):
+
+- **`source_list`** (`GET /notebooks/:id/sources`) — every source in a notebook
+  with its ID and title. Until now nothing exposed source IDs, so nothing could
+  address an individual source; a 153-source notebook answers in about a second.
+- **`source_read`** (`GET /notebooks/:id/sources/:sourceId`) — a source's full
+  indexed content: the exact text NotebookLM reasons over, which the web UI
+  only ever shows in fragments. Quote a source verbatim, verify what a PDF or a
+  web page really yielded, or pass the raw material to another tool.
+
+`source_read` takes `source_id` or `source_name` (partial, case-insensitive). A
+name matching several sources is an error naming the first few, never a guess —
+silently reading the wrong document is worse than being asked again.
+
+`format: text` (default) returns the plain-text rendition; `format: html` keeps
+headings, lists and links but inlines images as base64, so it is markedly
+bigger. Either way the whole document comes back, so `charCount` ships with it.
+
+The `GET_SOURCE` render selectors and envelope positions were read from
+[teng-lin/notebooklm-py](https://github.com/teng-lin/notebooklm-py) (MIT), which
+documents this endpoint; the implementation is our own. Verified live against a
+153-source notebook.
+
+### Fixed — `GET /` reported version 1.5.2 and linked to someone else's repo
+
+The server descriptor read `process.env.npm_package_version`, which is only set
+when the server starts through an npm script; started as `node dist/http-wrapper.js`
+— the documented way, and what the Docker image does — it fell back to a
+hardcoded `1.5.2`. It now reads the real version, and its `docs` link points at
+this project's documentation instead of the upstream fork it was copied from.
+
+### Fixed — the OpenAPI spec was missing 12 endpoints and stuck at 1.5.9
+
+`deployment/docs/openapi.yaml` documented 31 of the 44 REST endpoints: every v3
+extension (sharing, labels, study aids, mind maps, research), the notes
+read/list routes, and `/batch-to-vault` were absent, and `info.version` had
+never moved past 1.5.9. Spec and code now match endpoint for endpoint, and
+`version:sync` keeps `info.version` in step so CI blocks the drift from
+returning.
+
+---
+
 ## [3.0.4] - 2026-08-19
 
 ### Fixed — the RPC transport was silently dead since the rebrand
