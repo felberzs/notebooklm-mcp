@@ -27,7 +27,17 @@ silently reading the wrong document is worse than being asked again.
 
 `format: text` (default) returns the plain-text rendition; `format: html` keeps
 headings, lists and links but inlines images as base64, so it is markedly
-bigger. Either way the whole document comes back, so `charCount` ships with it.
+bigger.
+
+**Long sources are paginated.** The first PDF measured here ran to 157,716
+characters — enough to spend a caller's whole context before it could judge
+whether it wanted the document. So `source_read` returns 20,000 characters at a
+time by default, alongside `totalChars`, `nextCursor` and a `continue`
+instruction naming the exact next call. Pages are cut at the nearest line break
+(the nearest tag close, in HTML) so none ends mid-word, and concatenating every
+page reproduces the document byte for byte — verified live across nine pages of
+that 157,716-character source. `paginate: false` returns the whole thing in one
+response, and `max_chars` sets the page size.
 
 The `GET_SOURCE` render selectors and envelope positions were read from
 [teng-lin/notebooklm-py](https://github.com/teng-lin/notebooklm-py) (MIT), which

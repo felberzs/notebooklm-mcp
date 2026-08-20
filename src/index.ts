@@ -550,6 +550,9 @@ class NotebookLMMCPServer {
                 notebook_url?: string;
                 notebook_id?: string;
                 format?: 'text' | 'html';
+                paginate?: boolean;
+                max_chars?: number;
+                cursor?: number;
               }
             );
             break;

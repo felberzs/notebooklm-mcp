@@ -759,14 +759,20 @@ app.get('/notebooks/:id/sources', async (req: Request, res: Response) => {
   }
 });
 
-// Read a source's full indexed text — RPC extension. `?format=text|html`.
+// Read a source's indexed text — RPC extension.
+// `?format=text|html`, `?paginate=false` for the whole document in one response,
+// `?max_chars=` for the page size, `?cursor=` to resume from a previous page.
 app.get('/notebooks/:id/sources/:sourceId', async (req: Request, res: Response) => {
   try {
+    const num = (v: unknown) => (typeof v === 'string' && v !== '' ? Number(v) : undefined);
     res.json(
       await toolHandlers.handleReadSource({
         notebook_id: req.params.id,
         source_id: req.params.sourceId,
         format: req.query.format === 'html' ? 'html' : 'text',
+        paginate: req.query.paginate !== 'false',
+        max_chars: num(req.query.max_chars),
+        cursor: num(req.query.cursor),
       })
     );
   } catch (error) {

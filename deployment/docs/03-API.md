@@ -1802,18 +1802,35 @@ or to hand the raw material to another tool.
 
 **Query parameters:**
 
-| Parameter | Values           | Default | Description                                                          |
-| --------- | ---------------- | ------- | -------------------------------------------------------------------- |
-| `format`  | `text` \| `html` | `text`  | `html` keeps headings, lists and links, but inlines images as base64 |
+| Parameter   | Values            | Default | Description                                                          |
+| ----------- | ----------------- | ------- | -------------------------------------------------------------------- |
+| `format`    | `text` \| `html`  | `text`  | `html` keeps headings, lists and links, but inlines images as base64 |
+| `paginate`  | `true` \| `false` | `true`  | `false` returns the whole document in one response                   |
+| `max_chars` | number            | `20000` | Page size. Ignored when `paginate=false`                             |
+| `cursor`    | number            | `0`     | Where to resume — pass the `nextCursor` from the previous page       |
 
-**Two things to know before calling it:**
+**Pagination.** Sources are long: the first PDF measured here ran to 157,716
+characters. So by default you get one page at a time, and the response tells you
+how to get the rest:
 
-- **It returns the whole document.** `charCount` is in the response so you can
-  decide what to do with it; a book-length PDF can run to hundreds of thousands
-  of characters.
-- **`html` is much bigger than `text`** — images are embedded as base64 data
-  URIs, so the same PDF came back at 158 KB as text and 166 KB as HTML, most of
-  the difference being image payload.
+| Field        | Meaning                                                    |
+| ------------ | ---------------------------------------------------------- |
+| `totalChars` | Size of the whole document                                 |
+| `pageChars`  | Size of this page                                          |
+| `offset`     | Where this page starts                                     |
+| `hasMore`    | Whether anything follows                                   |
+| `nextCursor` | Pass back as `cursor` for the next page (absent when done) |
+| `continue`   | Plain-language instruction for the next call (same)        |
+
+Pages are cut at the nearest line break — the nearest tag close, in HTML — so a
+page never ends mid-word. Concatenating every page reproduces the document
+exactly; that round trip is verified against a live 157,716-character source.
+
+`paginate=false` returns everything in one response, which is the right call for
+a short source and an expensive one for a book.
+
+**One more thing:** `html` is bigger than `text` — images are embedded as base64
+data URIs, so the same PDF came back at 158 KB as text and 166 KB as HTML.
 
 **Example:**
 
@@ -1827,12 +1844,17 @@ curl "http://localhost:3000/notebooks/74912e55-.../sources/c3ae2b1b-...?format=t
 {
   "success": true,
   "data": {
-    "id": "c3ae2b1b-b362-46ae-9dc8-7b658a05955e",
-    "title": "A Guide to Non-violent Communication - CultureAlly",
-    "content": "A Guide to Non-violent Communication\n...",
-    "charCount": 16520,
+    "id": "8e058298-b561-4b3a-954f-953075e30e37",
+    "title": "All-in-Fully-Committing-to-a-Life-of-Nonviolence.pdf",
     "notebookId": "74912e55-34a4-4027-bdcc-8e89badd0efd",
-    "format": "text"
+    "format": "text",
+    "content": "All-in  Fully Committing to a Life of Nonviolence\n...",
+    "totalChars": 157716,
+    "pageChars": 19645,
+    "offset": 0,
+    "hasMore": true,
+    "nextCursor": 19645,
+    "continue": "Call read_source again with cursor: 19645 for the next 20000 characters. Pass paginate: false to get the whole document in one call instead."
   }
 }
 ```

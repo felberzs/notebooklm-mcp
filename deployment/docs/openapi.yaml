@@ -344,12 +344,17 @@ paths:
   /notebooks/{id}/sources/{sourceId}:
     get:
       tags: [Sources]
-      summary: Read a source's full indexed text
+      summary: Read a source's indexed text, one page at a time
       description: |
         RPC-backed (no browser). Returns the exact content NotebookLM reasons
-        over — the whole document, which may be very large; `charCount` is
-        reported alongside it. The `html` rendition preserves structure but
-        inlines images as base64 data URIs and is markedly bigger.
+        over. Sources are long — the first PDF measured ran to 157,716
+        characters — so the response is paginated by default and carries
+        `totalChars`, `pageChars`, `offset`, `hasMore`, `nextCursor` and a
+        plain-language `continue` instruction. Pages are cut at the nearest
+        line break (tag close, in HTML), and concatenating every page
+        reproduces the document exactly. Pass `paginate=false` for the whole
+        document in one response. The `html` rendition preserves structure but
+        inlines images as base64 and is bigger.
       parameters:
         - in: path
           name: id
@@ -363,9 +368,24 @@ paths:
           name: format
           required: false
           schema: { type: string, enum: [text, html], default: text }
+        - in: query
+          name: paginate
+          required: false
+          description: Set to `false` to return the whole document in one response.
+          schema: { type: boolean, default: true }
+        - in: query
+          name: max_chars
+          required: false
+          description: Page size in characters. Ignored when `paginate=false`.
+          schema: { type: integer, default: 20000, minimum: 1 }
+        - in: query
+          name: cursor
+          required: false
+          description: Resume point — the `nextCursor` returned by the previous page.
+          schema: { type: integer, minimum: 0 }
       responses:
         '200':
-          { description: 'Source content: { id, title, content, charCount, notebookId, format }' }
+          description: One page of the source's content, plus how to fetch the rest
 
   /notebooks/{id}/share:
     get:

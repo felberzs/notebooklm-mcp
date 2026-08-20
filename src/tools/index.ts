@@ -53,7 +53,7 @@ import { randomDelay } from '../utils/stealth-utils.js';
 import type { Page } from 'patchright';
 import { BatchExecuteClient } from '../rpc/batchexecute.js';
 import { NotebookRpc } from '../rpc/notebooks-rpc.js';
-import { SourcesRpc, type RpcSource, type SourceFulltext } from '../rpc/sources-rpc.js';
+import { SourcesRpc, type RpcSource } from '../rpc/sources-rpc.js';
 import { QueryRpc } from '../rpc/query-rpc.js';
 import { StudioRpc, type StudioType } from '../rpc/studio-rpc.js';
 import { SharingRpc, type ShareStatus } from '../rpc/sharing-rpc.js';
@@ -1190,8 +1190,10 @@ User: "Yes" → call remove_notebook`,
         'Use it to quote a source verbatim, to check what was actually ingested from a PDF ' +
         'or web page, or to feed the raw material to another tool. ' +
         'Identify the source by source_id (from list_sources) or by source_name (partial match).\n\n' +
-        'Returns the whole document, which can be very long: char_count is reported so you can ' +
-        'decide before spending context. RPC-backed (no browser).',
+        'Long sources are paginated by default: you get the first 20,000 characters plus ' +
+        '`totalChars`, `nextCursor` and a `continue` instruction telling you exactly how to ask ' +
+        'for the rest. Pass `cursor` to continue, or `paginate: false` to take the whole ' +
+        'document in one call. RPC-backed (no browser).',
       inputSchema: {
         type: 'object',
         properties: {
@@ -1216,7 +1218,25 @@ User: "Yes" → call remove_notebook`,
             enum: ['text', 'html'],
             description:
               'text (default) = the plain-text rendition. html = the HTML rendition, ' +
-              'which keeps headings, lists and links but is bulkier.',
+              'which keeps headings, lists and links but inlines images as base64 and is ' +
+              'markedly bigger.',
+          },
+          paginate: {
+            type: 'boolean',
+            description:
+              'Return one page at a time (default: true). Set false to get the whole document ' +
+              'in a single response — fine for a short source, expensive for a book-length one.',
+          },
+          max_chars: {
+            type: 'number',
+            description:
+              'Page size in characters (default: 20000). Ignored when paginate is false. ' +
+              'The cut is pulled back to the nearest line break so pages do not end mid-word.',
+          },
+          cursor: {
+            type: 'number',
+            description:
+              'Where to resume: pass the nextCursor from the previous page. Omit for the first page.',
           },
         },
       },
@@ -1750,6 +1770,54 @@ User: "Yes" → call remove_notebook`,
     outputSchema: TOOL_RESULT_OUTPUT_SCHEMA,
     annotations: TOOL_ANNOTATIONS[tool.name] ?? tool.annotations,
   }));
+}
+
+/**
+ * Default page size for `read_source`, in characters.
+ *
+ * Sources routinely run to six figures (a 157k-character PDF was the first one
+ * measured), so returning a whole document by default would spend a caller's
+ * entire context before it could decide whether it wanted the thing. 20k is
+ * roughly five thousand tokens: enough to be useful in one go, small enough to
+ * be recoverable if it was the wrong document.
+ */
+const DEFAULT_SOURCE_PAGE_CHARS = 20000;
+
+/** One page of a source's content, plus what the caller needs to ask for the rest. */
+export interface SourceReadResult {
+  id: string;
+  title: string;
+  notebookId: string;
+  format: string;
+  /** Size of the whole document, not of this page. */
+  totalChars: number;
+  content: string;
+  /** Size of `content`. Equals `totalChars` when the whole document was returned. */
+  pageChars: number;
+  /** Where this page starts in the document. */
+  offset: number;
+  hasMore: boolean;
+  /** Offset to pass back as `cursor`; absent on the last page. */
+  nextCursor?: number;
+  /** Plain-language instruction for fetching the next page; absent on the last page. */
+  continue?: string;
+}
+
+/**
+ * Choose where a page ends, preferring a natural boundary over an exact count.
+ *
+ * Cutting mid-word (or worse, mid-tag) makes both halves harder to read than
+ * either would be alone, so the cut is pulled back to the last line break —
+ * or, in HTML, the last tag close. The concession is capped at half a page: if
+ * the nearest boundary is further back than that, an exact cut loses less than
+ * a near-empty page would.
+ */
+function pageEnd(content: string, start: number, limit: number, format: string): number {
+  const hardEnd = Math.min(content.length, start + limit);
+  if (hardEnd >= content.length) return content.length;
+  const window = content.slice(start, hardEnd);
+  const idx = window.lastIndexOf(format === 'html' ? '>' : '\n');
+  return idx > limit / 2 ? start + idx + 1 : hardEnd;
 }
 
 /**
@@ -3293,7 +3361,10 @@ export class ToolHandlers {
     notebook_url?: string;
     notebook_id?: string;
     format?: 'text' | 'html';
-  }): Promise<ToolResult<SourceFulltext & { notebookId: string; format: string }>> {
+    paginate?: boolean;
+    max_chars?: number;
+    cursor?: number;
+  }): Promise<ToolResult<SourceReadResult>> {
     log.info(`🔧 [TOOL] read_source called`);
     try {
       if (!args.source_id && !args.source_name) {
@@ -3303,6 +3374,12 @@ export class ToolHandlers {
       const notebookId = this.resolveNotebookId(args.notebook_url, args.notebook_id);
       if (!notebookId) {
         return { success: false, error: 'No notebook specified (notebook_url or notebook_id)' };
+      }
+      const paginate = args.paginate !== false;
+      const maxChars = Math.max(1, Math.floor(args.max_chars ?? DEFAULT_SOURCE_PAGE_CHARS));
+      const cursor = Math.max(0, Math.floor(args.cursor ?? 0));
+      if (args.max_chars !== undefined && !Number.isFinite(args.max_chars)) {
+        return { success: false, error: 'max_chars must be a number' };
       }
 
       const client = await this.getRpcClient();
@@ -3333,8 +3410,54 @@ export class ToolHandlers {
       if (!fulltext) {
         return { success: false, error: `Source ${sourceId} returned no ${format} content` };
       }
-      log.success(`  ✅ (RPC) read ${fulltext.charCount} chars from "${fulltext.title}"`);
-      return { success: true, data: { ...fulltext, notebookId, format } };
+      const totalChars = fulltext.charCount;
+      if (cursor >= totalChars) {
+        return {
+          success: false,
+          error: `cursor ${cursor} is past the end of "${fulltext.title}" (${totalChars} chars)`,
+        };
+      }
+
+      const base = { id: fulltext.id, title: fulltext.title, notebookId, format, totalChars };
+      if (!paginate) {
+        log.success(
+          `  ✅ (RPC) read ${totalChars} chars from "${fulltext.title}" (whole document)`
+        );
+        return {
+          success: true,
+          data: {
+            ...base,
+            content: fulltext.content,
+            pageChars: totalChars,
+            offset: 0,
+            hasMore: false,
+          },
+        };
+      }
+
+      const end = pageEnd(fulltext.content, cursor, maxChars, format);
+      const content = fulltext.content.slice(cursor, end);
+      const hasMore = end < totalChars;
+      log.success(
+        `  ✅ (RPC) read ${content.length} chars from "${fulltext.title}" ` +
+          `(${cursor}-${end} of ${totalChars}${hasMore ? ', more follows' : ''})`
+      );
+      return {
+        success: true,
+        data: {
+          ...base,
+          content,
+          pageChars: content.length,
+          offset: cursor,
+          hasMore,
+          ...(hasMore
+            ? {
+                nextCursor: end,
+                continue: `Call read_source again with cursor: ${end} for the next ${Math.min(maxChars, totalChars - end)} characters. Pass paginate: false to get the whole document in one call instead.`,
+              }
+            : {}),
+        },
+      };
     } catch (error) {
       const msg = error instanceof Error ? error.message : String(error);
       log.error(`❌ [TOOL] read_source failed: ${msg}`);
