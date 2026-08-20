@@ -11,6 +11,7 @@ dist/
 
 # Environment
 .env
+env.md
 .env.local
 
 # Data directories (auth & sessions)
