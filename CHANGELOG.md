@@ -53,16 +53,40 @@ justified in a comment as "the most common Google Account language", which was
 never true. If you were relying on French output, set
 `NOTEBOOKLM_CONTENT_LANGUAGE=fr`.
 
-### Known issue — the browser fallback still ignores `language` (#36)
+### Fixed — the browser fallback ignored `language` too (#36)
 
-The language fix above covers the RPC transport, which is the default and where
-it is verified end to end. On the browser fallback the argument only reaches
-NotebookLM through the chat-fallback prompt; when generation goes through the
-Studio dialog it is dropped, and the call still reports `status: "ready"`. The
-menu-selection config (`languageSelectors`) has been declared on every content
-type and read by no code. Fixing it properly needs a capture of what the menu
-actually lists under different UI locales, so it is tracked separately rather
-than guessed at.
+On the browser path the language argument never reached NotebookLM: the format
+dialog has no language control, and the code never went deeper. It sits one
+level down, behind each format tile's pencil button, next to a free-text
+description field. Generation now goes through that panel whenever a language
+is asked for, and falls back to the plain preset click if the panel is not
+offered.
+
+Verified on the same call, same notebook, same transport:
+
+```
+before → "Analysis of Volcanic Formation and Structural Classifications"
+after  → "Análisis de la Formación y Tipología de los Volcanes"
+```
+
+Nine names in the language catalog were corrected against the menu as it
+actually renders — it says `Indonesia` where the reference says
+`Bahasa Indonesia`, `Latin` where it says `Latina`. A name that does not match
+the option text is a language silently not applied, which is the bug this
+release exists to remove. Options are matched on their own text rather than by
+substring, so `Español` can no longer select `Español (Latinoamérica)`.
+
+### Fixed — a citation with no excerpt claimed the filename as its quotation
+
+When the excerpt behind a citation marker could not be extracted, the source
+_name_ was put in the excerpt field. Callers could not tell a real quotation
+from a stand-in, and the formatters printed the filename inside quotation
+marks — `[1: "Paper.pdf"]` reads as though the source says "Paper.pdf".
+
+An absent excerpt is now absent: `sourceText` is empty, and each format says so
+in its own way (`[1: Paper.pdf — no excerpt]`, `(no excerpt extracted)`). The
+vault writer already handled the empty case correctly, so its output becomes
+accurate with no schema change.
 
 ### Fixed — `manage_labels` was calling the wrong RPC and never worked
 

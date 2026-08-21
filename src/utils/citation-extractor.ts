@@ -35,7 +35,15 @@ export interface Citation {
   marker: string;
   /** Citation number */
   number: number;
-  /** Source text from hover tooltip */
+  /**
+   * The quoted passage from the source — **empty when no excerpt could be
+   * extracted**, which is the whole point.
+   *
+   * It used to fall back to the source *name* when extraction failed, so a
+   * caller could not tell a real quotation from a filename standing in for
+   * one, and the formatters printed that filename inside quotation marks. The
+   * name is still available as `sourceName`, where it says what it is.
+   */
   sourceText: string;
   /** Source name/title if available */
   sourceName?: string;
@@ -219,11 +227,12 @@ export async function extractCitations(
         log.warning(`  ⚠️  [${marker}] Click/extract failed: ${error}`);
       }
 
-      // Always add the citation (with excerpt or just source name)
+      // Always record the citation, but never dress the source name up as the
+      // quoted passage: an unextracted excerpt is reported as absent.
       citations.push({
         marker,
         number,
-        sourceText: sourceText || sourceName,
+        sourceText: sourceText || '',
         sourceName: sourceName || undefined,
       });
 
@@ -330,9 +339,12 @@ function formatInline(answer: string, citations: Citation[]): string {
   const sortedCitations = [...citations].sort((a, b) => b.number - a.number);
 
   for (const citation of sortedCitations) {
-    const shortSource = truncateSource(citation.sourceText, 100);
     const num = citation.number;
-    const inlineReplacement = `[${num}: "${shortSource}"]`;
+    // With no excerpt there is nothing to quote, so name the source and say so
+    // rather than printing its filename inside quotation marks.
+    const inlineReplacement = citation.sourceText.trim()
+      ? `[${num}: "${truncateSource(citation.sourceText, 100)}"]`
+      : `[${num}: ${citation.sourceName || 'source'} — no excerpt]`;
 
     // Pattern 1: Bracketed format [n]
     const bracketedPattern = `\\[${num}\\]`;
@@ -362,7 +374,7 @@ function formatFootnotes(answer: string, citations: Citation[]): string {
   const footnotes = citations
     .map((c) => {
       const source = c.sourceName ? `${c.sourceName}: ` : '';
-      return `${c.marker} ${source}${c.sourceText}`;
+      return `${c.marker} ${source}${c.sourceText.trim() ? c.sourceText : '(no excerpt extracted)'}`;
     })
     .join('\n\n');
 
@@ -381,8 +393,10 @@ function formatExpanded(answer: string, citations: Citation[]): string {
   const sortedCitations = [...citations].sort((a, b) => b.number - a.number);
 
   for (const citation of sortedCitations) {
-    const shortSource = truncateSource(citation.sourceText, 150);
-    const replacement = `"${shortSource}"`;
+    // Expanding a marker into a quotation only makes sense if there is one.
+    const replacement = citation.sourceText.trim()
+      ? `"${truncateSource(citation.sourceText, 150)}"`
+      : `[${citation.sourceName || 'source'} — no excerpt]`;
     const num = citation.number;
 
     // Pattern 1: Bracketed format [n]

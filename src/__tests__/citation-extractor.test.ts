@@ -682,3 +682,36 @@ describe('citation-extractor', () => {
     });
   });
 });
+
+describe('a citation with no excerpt', () => {
+  // Regression: an unextracted excerpt used to be filled in with the source
+  // *name*, so the formatters printed a filename inside quotation marks and
+  // callers could not tell a real quotation from a stand-in.
+  const noExcerpt = [{ marker: '[1]', number: 1, sourceText: '', sourceName: 'Paper.pdf' }];
+
+  it('is named and marked absent inline, never quoted', () => {
+    const out = formatAnswerWithSources('Claim.[1]', noExcerpt, 'inline');
+    expect(out).toContain('[1: Paper.pdf — no excerpt]');
+    expect(out).not.toContain('"Paper.pdf"');
+  });
+
+  it('says so in the footnotes instead of leaving a blank quote', () => {
+    const out = formatAnswerWithSources('Claim.[1]', noExcerpt, 'footnotes');
+    expect(out).toContain('(no excerpt extracted)');
+  });
+
+  it('is not expanded into an empty quotation', () => {
+    const out = formatAnswerWithSources('Claim.[1]', noExcerpt, 'expanded');
+    expect(out).toContain('[Paper.pdf — no excerpt]');
+    expect(out).not.toContain('""');
+  });
+
+  it('still quotes normally when an excerpt is present', () => {
+    const withExcerpt = [
+      { marker: '[1]', number: 1, sourceText: 'the actual passage', sourceName: 'Paper.pdf' },
+    ];
+    expect(formatAnswerWithSources('Claim.[1]', withExcerpt, 'expanded')).toContain(
+      '"the actual passage"'
+    );
+  });
+});

@@ -20,7 +20,7 @@ export interface Citation {
   marker: string;
   /** Citation number */
   number: number;
-  /** Source text from hover tooltip */
+  /** The quoted passage — empty when no excerpt could be extracted. */
   sourceText: string;
   /** Source name/title if available */
   sourceName?: string;
