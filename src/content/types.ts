@@ -191,6 +191,15 @@ export interface ContentGenerationResult {
   googleSheetsUrl?: string;
   /** Google Slides URL (for presentation export) */
   googleSlidesUrl?: string;
+  /**
+   * Things that did not happen as asked, on a call that still succeeded.
+   *
+   * A caller that requested a language NotebookLM's browser UI cannot set for
+   * that content type gets its content and this note — rather than `ready` on
+   * an artifact quietly produced in another language, which is the failure this
+   * whole area was built to stop repeating.
+   */
+  warnings?: string[];
 }
 
 /**

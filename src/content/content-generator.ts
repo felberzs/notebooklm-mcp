@@ -85,6 +85,7 @@ export class ContentGenerator {
     }
 
     log.info(`Generating ${config.displayName}...`);
+    let languageWarning: string | undefined;
 
     try {
       // Step 1: Navigate to Studio panel
@@ -131,11 +132,19 @@ export class ContentGenerator {
         // customisation panel — that is the only place NotebookLM exposes a
         // language menu, and it sits one level deeper than the format tiles.
         // Falls back to the plain preset click when the panel is not offered.
-        const customised = input.language ? await this.configureViaCustomize(input) : false;
+        const customised = input.language
+          ? await this.configureViaCustomize(input)
+          : { languageSet: false, started: false };
+        if (input.language && !customised.languageSet) {
+          languageWarning =
+            `NotebookLM's ${config.displayName} dialog offers no language menu, so the ` +
+            `content was generated in the account's default language, not "${input.language}". ` +
+            `The RPC transport (the default) can set the language for this type.`;
+        }
 
         // If a format-preset dialog opened, pick a preset to start generation.
         // Audio has no dialog (generates directly), so this is a no-op there.
-        if (!customised) await this.selectArtifactPreset(config);
+        if (!customised.started) await this.selectArtifactPreset(config);
 
         log.info(`  Started ${config.displayName} generation via Studio`);
 
@@ -144,11 +153,13 @@ export class ContentGenerator {
 
         if (waitResult.ready) {
           log.success(`  ${config.displayName} generated successfully via Studio`);
+          if (languageWarning) log.warning(`  ${languageWarning}`);
           return {
             success: true,
             contentType: input.type,
             status: 'ready',
             textContent: waitResult.content,
+            ...(languageWarning ? { warnings: [languageWarning] } : {}),
           };
         } else if (waitResult.error) {
           log.error(`  ${config.displayName} generation failed: ${waitResult.error}`);
@@ -335,28 +346,44 @@ export class ContentGenerator {
    * moment any step is missing, because generating in the wrong language is
    * better than not generating at all, and the caller is told either way.
    */
-  private async configureViaCustomize(input: ContentGenerationInput): Promise<boolean> {
+  private async configureViaCustomize(
+    input: ContentGenerationInput
+  ): Promise<{ languageSet: boolean; started: boolean }> {
+    const nothingDone = { languageSet: false, started: false };
     const wanted = input.language?.trim();
-    if (!wanted) return false;
+    if (!wanted) return nothingDone;
     try {
-      const pencil = this.page.locator('button:has(mat-icon:has-text("edit"))').first();
-      if (!(await pencil.isVisible({ timeout: 4000 }).catch(() => false))) {
-        log.warning('  No customisation control in this dialog — language cannot be set here');
-        return false;
+      // Two dialog shapes, captured live on 2026-08-21. Audio and Video open
+      // straight onto their customisation panel, language menu included.
+      // Reports open on format tiles instead, and hide the menu behind each
+      // tile's pencil. So: use the menu if it is already here, and only go
+      // looking for a pencil if it is not.
+      // Generous first wait: these dialogs have been measured taking upwards of
+      // ten seconds to render, and a short timeout here does not report "no
+      // language menu" — it manufactures one, then generates in the wrong
+      // language and says so wrongly.
+      let combo = this.page.locator('[role="combobox"]').first();
+      if (!(await combo.isVisible({ timeout: 15000 }).catch(() => false))) {
+        const pencil = this.page.locator('button:has(mat-icon:has-text("edit"))').first();
+        if (!(await pencil.isVisible({ timeout: 5000 }).catch(() => false))) {
+          log.warning('  This dialog offers no language menu — leaving the language unset');
+          return nothingDone;
+        }
+        await this.page.mouse.move(0, 0).catch(() => undefined);
+        await pencil.click({ force: true, timeout: 10000 });
+        await randomDelay(1500, 2500);
+        combo = this.page.locator('[role="combobox"]').first();
+        if (!(await combo.isVisible({ timeout: 4000 }).catch(() => false))) {
+          log.warning('  Customisation panel has no language menu');
+          return nothingDone;
+        }
       }
       await this.page.mouse.move(0, 0).catch(() => undefined);
-      await pencil.click({ force: true, timeout: 10000 });
-      await randomDelay(1500, 2500);
-
-      const combo = this.page.locator('[role="combobox"]').first();
-      if (!(await combo.isVisible({ timeout: 4000 }).catch(() => false))) {
-        log.warning('  Customisation panel has no language menu');
-        return false;
-      }
       await combo.click({ force: true, timeout: 10000 });
       await randomDelay(1200, 2000);
 
-      if (!(await this.pickLanguageOption(wanted))) return false;
+      if (!(await this.pickLanguageOption(wanted))) return nothingDone;
+      log.success(`  Output language set to ${wanted}`);
 
       if (input.customInstructions) {
         const box = this.page.locator('textarea').first();
@@ -365,22 +392,29 @@ export class ContentGenerator {
         }
       }
 
+      // Scoped to the dialog. Searched page-wide, this matched a stray button
+      // behind the overlay and reported "no generate button" on a panel that
+      // plainly had one — while the language had in fact been set, so the
+      // caller was warned about a failure that had not happened.
       const generateLabel = t('buttons', 'generate');
       const generate = this.page
+        .locator('.cdk-overlay-container')
         .locator(
           `button:has-text("${generateLabel}"), button:has-text("Generate"), button:has-text("Générer")`
         )
         .last();
-      if (!(await generate.isVisible({ timeout: 4000 }).catch(() => false))) {
-        log.warning('  Customisation panel has no generate button');
-        return false;
+      if (!(await generate.isVisible({ timeout: 5000 }).catch(() => false))) {
+        // The language is set either way; the ordinary preset path will start
+        // generation. Nothing to warn about.
+        log.info('  No generate button in the panel — the preset flow will start generation');
+        return { languageSet: true, started: false };
       }
       await generate.click({ force: true, timeout: 10000 });
       log.success(`  Generating in ${wanted} via the customisation panel`);
-      return true;
+      return { languageSet: true, started: true };
     } catch (error) {
       log.warning(`  Customisation flow failed (${(error as Error).message}); using presets`);
-      return false;
+      return nothingDone;
     }
   }
 
