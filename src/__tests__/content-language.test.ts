@@ -10,6 +10,7 @@ import { describe, it, expect } from '@jest/globals';
 import {
   resolveContentLanguage,
   contentLanguageName,
+  contentLanguageEnglishName,
   CONTENT_LANGUAGES,
   DEFAULT_CONTENT_LANGUAGE,
 } from '../utils/content-language.js';
@@ -79,5 +80,11 @@ describe('the catalog itself', () => {
     expect(contentLanguageName('es')).toBe('Español');
     expect(contentLanguageName('de')).toBe('Deutsch');
     expect(contentLanguageName('xx')).toBeUndefined();
+  });
+
+  it('also gives an English name, for prompts written in English', () => {
+    expect(contentLanguageEnglishName('es')).toBe('Spanish');
+    expect(contentLanguageEnglishName('ja')).toBe('Japanese');
+    expect(contentLanguageEnglishName('pt_BR')).toBe('Brazilian Portuguese');
   });
 });

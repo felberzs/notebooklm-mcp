@@ -21,7 +21,7 @@ import { LEGACY_TO_CANONICAL } from './tool-names.js';
 import {
   resolveContentLanguage,
   contentLanguageHint,
-  contentLanguageName,
+  contentLanguageEnglishName,
   DEFAULT_CONTENT_LANGUAGE,
 } from '../utils/content-language.js';
 import { SessionManager } from '../session/session-manager.js';
@@ -3622,14 +3622,14 @@ export class ToolHandlers {
       const contentManager = new ContentManager(page);
 
       // Generate content with all options
-      // The browser path picks the language from a menu, and that menu lists
-      // native names ("Español"), not codes and not English names — so an
-      // English name never matched an option and the menu was left untouched,
-      // which is the browser-side half of issue #34.
+      // The browser path never touches NotebookLM's language menu — its
+      // `languageSelectors` config is declared and read by nothing (#36). The
+      // only place the language lands is the chat-fallback prompt, which asks
+      // in English, so it gets an English name and not a bare code.
       const result = await contentManager.generateContent({
         type: content_type,
         customInstructions: custom_instructions,
-        language: contentLanguageName(contentLanguage) ?? language,
+        language: contentLanguageEnglishName(contentLanguage) ?? language,
         videoStyle: video_style,
         videoFormat: video_format,
         infographicFormat: infographic_format,

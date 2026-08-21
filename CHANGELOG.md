@@ -53,6 +53,17 @@ justified in a comment as "the most common Google Account language", which was
 never true. If you were relying on French output, set
 `NOTEBOOKLM_CONTENT_LANGUAGE=fr`.
 
+### Known issue — the browser fallback still ignores `language` (#36)
+
+The language fix above covers the RPC transport, which is the default and where
+it is verified end to end. On the browser fallback the argument only reaches
+NotebookLM through the chat-fallback prompt; when generation goes through the
+Studio dialog it is dropped, and the call still reports `status: "ready"`. The
+menu-selection config (`languageSelectors`) has been declared on every content
+type and read by no code. Fixing it properly needs a capture of what the menu
+actually lists under different UI locales, so it is tracked separately rather
+than guessed at.
+
 ### Fixed — `manage_labels` was calling the wrong RPC and never worked
 
 Every label operation returned `RPC "LABEL_MANAGE" returned no result — the id

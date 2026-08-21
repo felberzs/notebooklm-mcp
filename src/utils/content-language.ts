@@ -158,6 +158,21 @@ export function resolveContentLanguage(input: string | undefined): string | null
   );
 }
 
+/**
+ * The English name for a code, for prompts written in English.
+ *
+ * The browser fallback asks NotebookLM in chat to "generate the content in X",
+ * so X wants to be a language name a model reads naturally, not a code.
+ * Returns undefined when the runtime has no locale data.
+ */
+export function contentLanguageEnglishName(code: string): string | undefined {
+  try {
+    return new Intl.DisplayNames(['en'], { type: 'language' }).of(code.replace(/_/g, '-'));
+  } catch {
+    return undefined;
+  }
+}
+
 /** The native name NotebookLM shows for a code — what the browser menu displays. */
 export function contentLanguageName(code: string): string | undefined {
   return CONTENT_LANGUAGES[code];
