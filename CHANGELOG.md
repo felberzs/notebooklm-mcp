@@ -62,16 +62,31 @@ both, then reading the result at the wrong index — create echoes the label lis
 one slot further along than list does. Found while investigating #34, fixed and
 verified live: create, list and delete now round-trip.
 
-### Known issue — Studio generation is failing upstream
+### Fixed — "the id likely rotated" was reported for calls the server had simply refused
 
-Separately from #34: `CREATE_STUDIO` currently returns an empty result for every
-artifact type on a valid session, so `content_generate` and
-`generate_study_aid` fall back to the browser. The RPC id is **not** the
-problem — it matches the reference implementation, as do the artifact type codes
-and payload slots — so the drift message suggesting `NOTEBOOKLM_RPC_OVERRIDES`
-is misleading here. `CREATE_NOTE` (`CYK0Xb`) is empty the same way, which is why
-`generate_mind_map` still fails at the save step even though generation itself
-now works and honours the requested language. Tracked in #35.
+`content_generate`, `generate_study_aid` and `generate_mind_map` were failing
+with `RPC "CREATE_STUDIO" returned no result — the id likely rotated`, pointing
+at `NOTEBOOKLM_RPC_OVERRIDES` and a replacement id to go and find.
+
+There was no rotated id, and nothing upstream was broken. NotebookLM was
+answering normally and **refusing the call** — `PERMISSION_DENIED`, because the
+notebook was shared with the account rather than owned by it, and NotebookLM
+only lets you generate content in your own notebooks. The refusal travels in the
+`wrb.fr` envelope at index 5 as a gRPC status code, and the client was throwing
+that away: it only looked for a string payload, found none, and concluded the
+id was unknown.
+
+A refusal and a rotated id are now different errors, because they carry
+different evidence — a refusal comes with an envelope for the id, a rotated id
+comes with none at all. Refusals name the status and what it means for you
+(`PERMISSION_DENIED`, `RESOURCE_EXHAUSTED` when a daily quota is spent,
+`NOT_FOUND`, `UNAUTHENTICATED`, …), and are no longer retried, since a verdict
+does not change in a second — except `UNAUTHENTICATED`, which is exactly the
+stale-token case the retry was built for.
+
+The same message had already caused one wrong diagnosis, and the label bug above
+was found under it too. Status-code semantics confirmed against
+teng-lin/notebooklm-py's decoder (MIT).
 
 ---
 

@@ -56,11 +56,81 @@ export class RpcError extends Error {
 export class RpcDriftError extends RpcError {
   constructor(rpcName: RpcName, id: string) {
     super(
-      `RPC "${rpcName}" (${id}) returned no result — the id likely rotated. ` +
-        `Hot-patch it via NOTEBOOKLM_RPC_OVERRIDES='{"${rpcName}":"<new-id>"}'.`,
+      `RPC "${rpcName}" (${id}) is not in the response — the server answered ` +
+        `without an envelope for this id, which means it no longer knows it. ` +
+        `Hot-patch a rotated id via NOTEBOOKLM_RPC_OVERRIDES='{"${rpcName}":"<new-id>"}'.`,
       rpcName
     );
     this.name = 'RpcDriftError';
+  }
+}
+
+/**
+ * The canonical gRPC status codes the backend puts at index 5 of a `wrb.fr`
+ * envelope when it refuses a call. Standard codes; the mapping is confirmed
+ * against teng-lin/notebooklm-py's decoder (MIT).
+ */
+const GRPC_STATUS: Record<number, string> = {
+  1: 'CANCELLED',
+  2: 'UNKNOWN',
+  3: 'INVALID_ARGUMENT',
+  4: 'DEADLINE_EXCEEDED',
+  5: 'NOT_FOUND',
+  6: 'ALREADY_EXISTS',
+  7: 'PERMISSION_DENIED',
+  8: 'RESOURCE_EXHAUSTED',
+  9: 'FAILED_PRECONDITION',
+  10: 'ABORTED',
+  11: 'OUT_OF_RANGE',
+  12: 'UNIMPLEMENTED',
+  13: 'INTERNAL',
+  14: 'UNAVAILABLE',
+  15: 'DATA_LOSS',
+  16: 'UNAUTHENTICATED',
+};
+
+/** What a refusal actually means for someone using this server. */
+const STATUS_ADVICE: Record<number, string> = {
+  5: 'the notebook, source or artifact does not exist (or is not visible to this account)',
+  7:
+    'this account may not do that on this notebook. Most often the notebook is ' +
+    'shared with the account rather than owned by it — NotebookLM only lets you ' +
+    'generate content in your own notebooks. A Workspace policy can also cause it',
+  8: 'a quota is exhausted — NotebookLM caps generation per day',
+  9: 'the notebook is not in a state that allows this (e.g. sources still processing)',
+  12: 'NotebookLM no longer implements this operation',
+  16: 'the session is no longer authenticated — run auth_setup',
+};
+
+/**
+ * The server answered for this id, and refused.
+ *
+ * Distinct from {@link RpcDriftError} on purpose: a refusal carries an
+ * envelope for the id, a rotated id carries none at all. Conflating them told
+ * users to go hunting for a replacement id that was never the problem.
+ */
+export class RpcStatusError extends RpcError {
+  constructor(
+    rpcName: RpcName,
+    id: string,
+    readonly status: number
+  ) {
+    const label = GRPC_STATUS[status] ?? `status ${status}`;
+    const advice = STATUS_ADVICE[status];
+    super(
+      `RPC "${rpcName}" (${id}) was refused by NotebookLM: ${label}` +
+        (advice ? ` — ${advice}.` : '.'),
+      rpcName
+    );
+    this.name = 'RpcStatusError';
+  }
+}
+
+/** Sentinel thrown by the pure parser when the envelope carries a gRPC status. */
+export class RpcStatusRefusal extends Error {
+  constructor(readonly status: number) {
+    super(`batchexecute refused with status ${status}`);
+    this.name = 'RpcStatusRefusal';
   }
 }
 
@@ -95,8 +165,15 @@ export function parseBatchExecute(text: string, id: string): unknown {
     if (!Array.isArray(chunk)) continue;
     for (const env of chunk as unknown[]) {
       if (!Array.isArray(env)) continue;
-      if (env[0] === 'wrb.fr' && env[1] === id && typeof env[2] === 'string') {
-        return JSON.parse(env[2]);
+      if (env[0] === 'wrb.fr' && env[1] === id) {
+        if (typeof env[2] === 'string') return JSON.parse(env[2]);
+        // The envelope is here but carries no data. Index 5 says why: a
+        // one-element array holding a gRPC status code. Reading it is the
+        // difference between "NotebookLM refused this" and the drift error we
+        // used to raise, which sent people looking for a rotated id.
+        const status = Array.isArray(env[5]) ? env[5][0] : undefined;
+        if (typeof status === 'number' && status !== 0) throw new RpcStatusRefusal(status);
+        return null; // present, empty, and not an error — a legitimately null result
       }
       if (env[0] === 'er') throw new RpcServerError(env);
     }
@@ -168,6 +245,10 @@ export class BatchExecuteClient {
     } catch (err) {
       // One retry after re-bootstrapping — covers an expired CSRF/session token.
       if (err instanceof RpcDriftError) throw err;
+      // A refusal is a verdict, not a hiccup: retrying a PERMISSION_DENIED or an
+      // exhausted quota just costs a round trip. UNAUTHENTICATED is the one
+      // exception — that is exactly the stale-token case the retry exists for.
+      if (err instanceof RpcStatusError && err.status !== 16) throw err;
       log.warning(
         `  ↻ RPC "${name}" failed (${(err as Error).message}); re-bootstrapping and retrying once...`
       );
@@ -304,12 +385,16 @@ export class BatchExecuteClient {
     try {
       payload = parseBatchExecute(text, id);
     } catch (e) {
+      if (e instanceof RpcStatusRefusal) {
+        throw new RpcStatusError(name, id, e.status);
+      }
       if (e instanceof RpcServerError) {
         throw new RpcError(`RPC "${name}" server error`, name, e.envelope);
       }
       throw new RpcError(`RPC "${name}" response parse failed`, name, e);
     }
-    // No envelope for this id → the id almost certainly rotated.
+    // No envelope for this id at all → the id almost certainly rotated. A
+    // refusal never reaches here: it carries an envelope and throws above.
     if (payload === undefined) throw new RpcDriftError(name, id);
     return payload;
   }
