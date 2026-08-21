@@ -678,13 +678,20 @@ class NotebookLMMCPServer {
                 notebook_id?: string;
                 kind: 'flashcards' | 'quiz';
                 focus?: string;
+                language?: string;
               }
             );
             break;
 
           case 'generate_mind_map':
             result = await this.toolHandlers.handleGenerateMindMap(
-              args as { notebook_url?: string; notebook_id?: string; title?: string }
+              args as {
+                notebook_url?: string;
+                notebook_id?: string;
+                title?: string;
+                language?: string;
+                focus?: string;
+              }
             );
             break;
 

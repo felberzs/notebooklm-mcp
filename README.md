@@ -4,7 +4,7 @@
 
 **Automate Google NotebookLM at scale. 33-endpoint HTTP REST API for n8n / Zapier / Make / curl, plus an MCP server for Claude Code / Cursor / Codex. Citation-backed Q&A, full Studio generation (audio · video · infographic · report · presentation · data table), multi-account rotation with auto-reauth across personal and Google Workspace accounts.**
 
-> v3.1.0 — **major refactor: dual transport.** The data plane now drives NotebookLM's **internal `batchexecute` RPC API** (the same one the web app calls) instead of scraping the DOM — **immune to UI rebrands, 10-100× faster** (list notebooks ~1 s vs ~30 s, generate a report ~13 s vs minutes), and more correct. The Playwright browser is kept as an **automatic fallback** (`NOTEBOOKLM_TRANSPORT=dom` forces it) plus login / auto-reauth, so nothing breaks if an internal endpoint shifts — **both paths ship permanently for robustness**. Adds **5 new tools**: notebook sharing, study aids (flashcards / quiz), mind maps, source labels, and web research / source discovery. Still batch-tested on overnight runs of 1 000+ questions. See the [changelog](./CHANGELOG.md). [Compare with `PleasePrompto/notebooklm-mcp`](https://roomi-fields.github.io/notebooklm-mcp/compare) for when this project is the right pick (REST API, full Studio, auto-reauth).
+> v3.1.1 — **major refactor: dual transport.** The data plane now drives NotebookLM's **internal `batchexecute` RPC API** (the same one the web app calls) instead of scraping the DOM — **immune to UI rebrands, 10-100× faster** (list notebooks ~1 s vs ~30 s, generate a report ~13 s vs minutes), and more correct. The Playwright browser is kept as an **automatic fallback** (`NOTEBOOKLM_TRANSPORT=dom` forces it) plus login / auto-reauth, so nothing breaks if an internal endpoint shifts — **both paths ship permanently for robustness**. Adds **5 new tools**: notebook sharing, study aids (flashcards / quiz), mind maps, source labels, and web research / source discovery. Still batch-tested on overnight runs of 1 000+ questions. See the [changelog](./CHANGELOG.md). [Compare with `PleasePrompto/notebooklm-mcp`](https://roomi-fields.github.io/notebooklm-mcp/compare) for when this project is the right pick (REST API, full Studio, auto-reauth).
 
 > **Note (July 2026):** Google rebranded **NotebookLM** to **Gemini Notebook**. It is the same product, existing links redirect, and this project drives the same underlying service — the browser path was updated for the new DOM in v2.3.0 and the RPC path in v3.0.0. Package and repository keep the `notebooklm` name.
 
@@ -112,6 +112,8 @@ Generate multiple content types from your notebook sources:
 | **Mind Map**       | Interactive node graph   | Saved to the notebook                          |
 
 **Video Visual Styles**: classroom, documentary, animated, corporate, cinematic, minimalist
+
+**Language of generated content**: pass `language` to any generator — a BCP-47 code (`es`, `ja`, `pt_BR`, `zh_Hans`) or a name in English or in the language itself (`"Spanish"`, `"Español"`). 81 languages are accepted, and an unrecognised one is refused rather than quietly swapped for another. Set a default with `NOTEBOOKLM_CONTENT_LANGUAGE`; it is deliberately independent of `NOTEBOOKLM_UI_LOCALE`, which only picks the interface language the browser fallback reads.
 
 Flashcards and quizzes are generated via `generate_study_aid`; mind maps via `generate_mind_map`. v3 also adds `share_notebook`, `manage_labels`, and `research_sources` (web/Drive source discovery) — see the [changelog](./CHANGELOG.md).
 

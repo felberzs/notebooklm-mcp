@@ -18,6 +18,12 @@
 import fs from 'fs';
 import path from 'path';
 import { LEGACY_TO_CANONICAL } from './tool-names.js';
+import {
+  resolveContentLanguage,
+  contentLanguageHint,
+  contentLanguageName,
+  DEFAULT_CONTENT_LANGUAGE,
+} from '../utils/content-language.js';
 import { SessionManager } from '../session/session-manager.js';
 import { AuthManager } from '../auth/auth-manager.js';
 import { NotebookLibrary } from '../library/notebook-library.js';
@@ -1282,7 +1288,10 @@ User: "Yes" → call remove_notebook`,
           language: {
             type: 'string',
             description:
-              'Language for the generated content (e.g., "French", "Spanish", "Japanese"). NotebookLM supports 80+ languages.',
+              'Language of the generated content — 81 supported. Give a BCP-47 code ' +
+              '("es", "ja", "pt_BR", "zh_Hans") or a name in English or in the language ' +
+              'itself ("Spanish", "Español"). Defaults to NOTEBOOKLM_CONTENT_LANGUAGE, or ' +
+              'English. An unrecognised value is an error, never a silent substitution.',
           },
           video_style: {
             type: 'string',
@@ -1688,6 +1697,12 @@ User: "Yes" → call remove_notebook`,
             description: 'Notebook UUID (alternative to notebook_url).',
           },
           focus: { type: 'string', description: 'Optional focus prompt to steer the content.' },
+          language: {
+            type: 'string',
+            description:
+              'Language of the generated study aid (BCP-47 code or language name). ' +
+              'Defaults to NOTEBOOKLM_CONTENT_LANGUAGE, or English.',
+          },
         },
         required: ['kind'],
       },
@@ -1706,6 +1721,16 @@ User: "Yes" → call remove_notebook`,
             description: 'Notebook UUID (alternative to notebook_url).',
           },
           title: { type: 'string', description: 'Optional title for the saved mind map.' },
+          language: {
+            type: 'string',
+            description:
+              'Language of the mind-map nodes (BCP-47 code or language name). ' +
+              'Defaults to NOTEBOOKLM_CONTENT_LANGUAGE, or English.',
+          },
+          focus: {
+            type: 'string',
+            description: 'Optional prompt steering what the mind map emphasises.',
+          },
         },
       },
     },
@@ -1818,6 +1843,14 @@ function pageEnd(content: string, start: number, limit: number, format: string):
   const window = content.slice(start, hardEnd);
   const idx = window.lastIndexOf(format === 'html' ? '>' : '\n');
   return idx > limit / 2 ? start + idx + 1 : hardEnd;
+}
+
+/** Error text for a `language` argument nothing in the catalog matches. */
+function unknownLanguageError(input: string): string {
+  return (
+    `Unknown language "${input}". ${contentLanguageHint()}. ` +
+    `Refusing rather than generating in some other language and reporting success.`
+  );
 }
 
 /**
@@ -3529,17 +3562,26 @@ export class ToolHandlers {
         'report',
         'data_table',
       ]);
+      // The output language is resolved here, once, for both transports. It is
+      // deliberately NOT derived from CONFIG.uiLocale: that value exists to
+      // drive the interface, and letting it choose the artifact language is
+      // what made a Spanish notebook produce French audio (issue #34).
+      const contentLanguage = this.resolveLanguageArg(language);
+      if (language && !contentLanguage) {
+        return { success: false, error: unknownLanguageError(language) };
+      }
+
       const genNotebookId = this.notebookIdFromUrl(resolvedNotebookUrl);
       if (this.useRpcTransport() && genNotebookId && RPC_STUDIO_TYPES.has(content_type)) {
         try {
-          const client = await this.getRpcClient();
+          const client = await this.getRpcClient(contentLanguage);
           const sourceIds = await new NotebookRpc(client).getSourceIds(genNotebookId);
           if (sourceIds.length === 0) throw new Error('notebook has no sources to generate from');
           const res = await new StudioRpc(client).generate(
             genNotebookId,
             content_type as StudioType,
             sourceIds,
-            { language: language || CONFIG.uiLocale, focus: custom_instructions || '' }
+            { language: contentLanguage, focus: custom_instructions || '' }
           );
           const ok = res.status === 'completed';
           log.success(`  ✅ (RPC) generate ${content_type}: ${res.status}`);
@@ -3580,10 +3622,14 @@ export class ToolHandlers {
       const contentManager = new ContentManager(page);
 
       // Generate content with all options
+      // The browser path picks the language from a menu, and that menu lists
+      // native names ("Español"), not codes and not English names — so an
+      // English name never matched an option and the menu was left untouched,
+      // which is the browser-side half of issue #34.
       const result = await contentManager.generateContent({
         type: content_type,
         customInstructions: custom_instructions,
-        language,
+        language: contentLanguageName(contentLanguage) ?? language,
         videoStyle: video_style,
         videoFormat: video_format,
         infographicFormat: infographic_format,
@@ -4162,7 +4208,7 @@ export class ToolHandlers {
    * cookies. Reuses the existing browser session for auth (hybrid design);
    * the RPC calls themselves use no browser.
    */
-  private async getRpcClient(): Promise<BatchExecuteClient> {
+  private async getRpcClient(hl?: string): Promise<BatchExecuteClient> {
     const sharedContextManager = this.sessionManager.getSharedContextManager();
     const context = await sharedContextManager.getOrCreateContext();
     // The July 2026 rebrand moved accounts to notebook.google.com. Cookies must
@@ -4176,7 +4222,17 @@ export class ToolHandlers {
     for (const host of hosts) {
       const raw = await context.cookies(`https://${host}`);
       const cookies = raw.map((c) => ({ name: c.name, value: c.value }));
-      const client = new BatchExecuteClient({ cookies, hl: CONFIG.uiLocale, baseHost: host });
+      // `hl` is what NotebookLM actually generates in. Proven live: a mind map
+      // requested with "es" in its payload came back in German because the
+      // request carried hl=de — the payload's language slot was ignored
+      // outright (issue #34). So generation callers pass the content language
+      // here; everything else keeps the UI locale, which only shapes the
+      // wording of messages the RPC path never reads.
+      const client = new BatchExecuteClient({
+        cookies,
+        hl: hl || CONFIG.uiLocale,
+        baseHost: host,
+      });
       try {
         await client.bootstrap();
         return client;
@@ -4246,6 +4302,7 @@ export class ToolHandlers {
     notebook_id?: string;
     kind: 'flashcards' | 'quiz';
     focus?: string;
+    language?: string;
   }): Promise<ToolResult<{ status: string; title?: string; artifactId?: string }>> {
     log.info(`🔧 [TOOL] generate_study_aid (${args.kind}) called`);
     try {
@@ -4259,11 +4316,15 @@ export class ToolHandlers {
       if (args.kind !== 'flashcards' && args.kind !== 'quiz') {
         return { success: false, error: `kind must be 'flashcards' or 'quiz'` };
       }
-      const client = await this.getRpcClient();
+      const language = this.resolveLanguageArg(args.language);
+      if (args.language && !language) {
+        return { success: false, error: unknownLanguageError(args.language) };
+      }
+      const client = await this.getRpcClient(language);
       const sourceIds = await new NotebookRpc(client).getSourceIds(notebookId);
       if (!sourceIds.length) return { success: false, error: 'notebook has no sources' };
       const res = await new StudioRpc(client).generate(notebookId, args.kind, sourceIds, {
-        language: CONFIG.uiLocale,
+        language,
         focus: args.focus || '',
       });
       const ok = res.status === 'completed';
@@ -4280,6 +4341,18 @@ export class ToolHandlers {
     }
   }
 
+  /**
+   * Resolve a caller's `language` argument to a code NotebookLM accepts.
+   *
+   * Falls back to the configured default (never to `uiLocale`). Returns null
+   * only when the caller named a language and it matched nothing — the caller
+   * is then told, rather than quietly served a different language.
+   */
+  private resolveLanguageArg(language: string | undefined): string {
+    if (!language) return CONFIG.contentLanguage || DEFAULT_CONTENT_LANGUAGE;
+    return resolveContentLanguage(language) ?? '';
+  }
+
   /** Resolve a notebook UUID from url/id/active-notebook, or null. */
   private resolveNotebookId(notebook_url?: string, notebook_id?: string): string | null {
     const url =
@@ -4294,18 +4367,25 @@ export class ToolHandlers {
     notebook_url?: string;
     notebook_id?: string;
     title?: string;
+    language?: string;
+    focus?: string;
   }): Promise<ToolResult<MindMapResult>> {
     log.info(`🔧 [TOOL] generate_mind_map called`);
     try {
       const notebookId = this.resolveNotebookId(args.notebook_url, args.notebook_id);
       if (!notebookId) return { success: false, error: 'No notebook specified' };
-      const client = await this.getRpcClient();
+      const language = this.resolveLanguageArg(args.language);
+      if (args.language && !language) {
+        return { success: false, error: unknownLanguageError(args.language) };
+      }
+      const client = await this.getRpcClient(language);
       const sourceIds = await new NotebookRpc(client).getSourceIds(notebookId);
       if (!sourceIds.length) return { success: false, error: 'notebook has no sources' };
       const res = await new MindMapRpc(client).generateAndSave(
         notebookId,
         sourceIds,
-        args.title || 'Mind Map'
+        args.title || 'Mind Map',
+        { language, instructions: args.focus || '' }
       );
       log.success(`  ✅ (RPC) mind map saved: ${res.mindMapId}`);
       return { success: true, data: res };

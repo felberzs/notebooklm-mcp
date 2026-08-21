@@ -18,16 +18,22 @@ export class MindMapRpc {
   async generateAndSave(
     notebookId: string,
     sourceIds: string[],
-    title = 'Mind Map'
+    title = 'Mind Map',
+    opts: { language?: string; instructions?: string } = {}
   ): Promise<MindMapResult> {
     const sourcesNested = sourceIds.map((id) => [[id]]);
+    // The third element of the config triple is the output language and the
+    // second carries a free-text steer. Both were sent empty, so every mind map
+    // came back in whatever language the request's `hl` implied — French nodes
+    // for a Spanish notebook (issue #34). Slot positions read from
+    // teng-lin/notebooklm-py's `build_mind_map_params` (MIT).
     const genParams = [
       sourcesNested,
       null,
       null,
       null,
       null,
-      ['interactive_mindmap', [['[CONTEXT]', '']], ''],
+      ['interactive_mindmap', [['[CONTEXT]', opts.instructions || '']], opts.language || 'en'],
       null,
       [2, null, [1]],
     ];

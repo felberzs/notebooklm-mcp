@@ -34,11 +34,12 @@ node dist/http-wrapper.js
 
 ### Browser Configuration
 
-| Variable               | Default | Description                                             |
-| ---------------------- | ------- | ------------------------------------------------------- |
-| `HEADLESS`             | `true`  | Chrome headless (`true` = invisible, `false` = visible) |
-| `STEALTH_ENABLED`      | `true`  | Stealth anti-detection mode                             |
-| `NOTEBOOKLM_UI_LOCALE` | `fr`    | UI language for selectors (`fr`, `en`, `de`, `ja`)      |
+| Variable                      | Default | Description                                                                 |
+| ----------------------------- | ------- | --------------------------------------------------------------------------- |
+| `HEADLESS`                    | `true`  | Chrome headless (`true` = invisible, `false` = visible)                     |
+| `STEALTH_ENABLED`             | `true`  | Stealth anti-detection mode                                                 |
+| `NOTEBOOKLM_UI_LOCALE`        | `en`    | Interface language the browser fallback reads (`fr`, `en`, `de`, `ja`)      |
+| `NOTEBOOKLM_CONTENT_LANGUAGE` | `en`    | Default language of generated content — 81 accepted, by BCP-47 code or name |
 
 **Examples:**
 
@@ -196,7 +197,8 @@ NODE_ENV=production
 # Browser Configuration
 HEADLESS=true
 STEALTH_ENABLED=true
-NOTEBOOKLM_UI_LOCALE=fr  # fr | en | de | ja
+NOTEBOOKLM_UI_LOCALE=en          # fr | en | de | ja — the UI the browser fallback reads
+NOTEBOOKLM_CONTENT_LANGUAGE=en   # language of generated content: es, ja, pt_BR, "Spanish"…
 
 # Session Configuration
 MAX_SESSIONS=10

@@ -684,8 +684,16 @@ app.put('/notebooks/:id/share', async (req: Request, res: Response) => {
 // Generate a study aid (flashcards/quiz) — RPC extension. Body: { notebook_url, kind, focus }
 app.post('/content/study-aid', async (req: Request, res: Response) => {
   try {
-    const { notebook_url, notebook_id, kind, focus } = req.body || {};
-    res.json(await toolHandlers.handleGenerateStudyAid({ notebook_url, notebook_id, kind, focus }));
+    const { notebook_url, notebook_id, kind, focus, language } = req.body || {};
+    res.json(
+      await toolHandlers.handleGenerateStudyAid({
+        notebook_url,
+        notebook_id,
+        kind,
+        focus,
+        language,
+      })
+    );
   } catch (error) {
     res
       .status(500)
@@ -710,8 +718,16 @@ app.post('/content/research', async (req: Request, res: Response) => {
 // Generate + save a mind map — RPC extension. Body: { notebook_url, title }
 app.post('/content/mind-map', async (req: Request, res: Response) => {
   try {
-    const { notebook_url, notebook_id, title } = req.body || {};
-    res.json(await toolHandlers.handleGenerateMindMap({ notebook_url, notebook_id, title }));
+    const { notebook_url, notebook_id, title, language, focus } = req.body || {};
+    res.json(
+      await toolHandlers.handleGenerateMindMap({
+        notebook_url,
+        notebook_id,
+        title,
+        language,
+        focus,
+      })
+    );
   } catch (error) {
     res
       .status(500)

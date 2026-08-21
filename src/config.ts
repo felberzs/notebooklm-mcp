@@ -10,6 +10,7 @@
  */
 
 import envPaths from 'env-paths';
+import { resolveContentLanguage, contentLanguageHint } from './utils/content-language.js';
 import fs from 'fs';
 import path from 'path';
 
@@ -77,8 +78,20 @@ export interface Config {
   instanceProfileTtlHours: number;
   instanceProfileMaxCount: number;
 
-  // UI Locale (NotebookLM follows Google Account language)
+  /**
+   * Interface language the browser fallback is driven in.
+   *
+   * Limited to the four locales whose text selectors are translated. This is
+   * about *reading* NotebookLM's UI — it must never decide what language a
+   * generated artifact comes out in; that is `contentLanguage` (issue #34).
+   */
   uiLocale: 'fr' | 'en' | 'de' | 'ja';
+
+  /**
+   * Default output language for generated content, as a BCP-47 code.
+   * Overridden per call by the `language` argument. See utils/content-language.
+   */
+  contentLanguage: string;
 
   // Browser channel: 'chromium' (default, Docker compatible) or 'chrome' (local install)
   browserChannel: 'chromium' | 'chrome';
@@ -152,8 +165,15 @@ const DEFAULTS: Config = {
   instanceProfileTtlHours: 72,
   instanceProfileMaxCount: 20,
 
-  // UI Locale (default: French - matches most common Google Account language)
-  uiLocale: 'fr',
+  // Interface language for the browser fallback. English is the default because
+  // it is the one every account can render and the one most reports arrive in;
+  // it used to be French, on the mistaken grounds that French was "the most
+  // common Google Account language", and that default silently produced French
+  // audio and French mind maps for Spanish notebooks (issue #34).
+  uiLocale: 'en',
+
+  // Output language for generated content. Independent of uiLocale by design.
+  contentLanguage: 'en',
 
   // Browser channel: 'chromium' works in Docker, 'chrome' for local with Google Chrome installed
   browserChannel: 'chromium',
@@ -217,6 +237,33 @@ function parseLocale(
   if (lower === 'fr' || lower === 'en' || lower === 'de' || lower === 'ja') {
     return lower;
   }
+  // Say so. Discarding this in silence cost a user a long debugging session
+  // (issue #34): they set NOTEBOOKLM_UI_LOCALE=es, got 'fr' back with no word
+  // about it, and had no way to tell the setting had been ignored.
+  console.error(
+    `[notebooklm-mcp] NOTEBOOKLM_UI_LOCALE="${value}" is not a supported interface ` +
+      `language (fr, en, de, ja) — falling back to "${defaultValue}". ` +
+      `This only affects the language NotebookLM's UI is driven in; to choose the ` +
+      `language of generated content use the tool's "language" argument or ` +
+      `NOTEBOOKLM_CONTENT_LANGUAGE.`
+  );
+  return defaultValue;
+}
+
+/**
+ * Parse the default output language for generated content (for env vars).
+ *
+ * Accepts a BCP-47 code or a language name; an unrecognised value is reported
+ * rather than dropped, for the same reason parseLocale reports one.
+ */
+function parseContentLanguage(value: string | undefined, defaultValue: string): string {
+  if (!value) return defaultValue;
+  const resolved = resolveContentLanguage(value);
+  if (resolved) return resolved;
+  console.error(
+    `[notebooklm-mcp] NOTEBOOKLM_CONTENT_LANGUAGE="${value}" was not recognised — ` +
+      `falling back to "${defaultValue}". ${contentLanguageHint()}.`
+  );
   return defaultValue;
 }
 
@@ -292,6 +339,10 @@ function applyEnvOverrides(config: Config): Config {
       config.instanceProfileMaxCount
     ),
     uiLocale: parseLocale(process.env.NOTEBOOKLM_UI_LOCALE, config.uiLocale),
+    contentLanguage: parseContentLanguage(
+      process.env.NOTEBOOKLM_CONTENT_LANGUAGE,
+      config.contentLanguage
+    ),
     browserChannel: parseBrowserChannel(process.env.BROWSER_CHANNEL, config.browserChannel),
   };
 }
