@@ -67,7 +67,8 @@ export const RPC_IDS = {
   DELETE_NOTE: 'AH0mwd',
 
   // Labels
-  LABEL_MANAGE: 'agX4Bc',
+  LABEL_LIST: 'I3xc3c', // GetLabels — listing is its own RPC, NOT a mode of create
+  LABEL_CREATE: 'agX4Bc', // CreateLabel (manual create + AI grouping)
   LABEL_MUTATE: 'le8sX',
   LABEL_DELETE: 'GyzE7e',
 

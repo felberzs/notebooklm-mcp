@@ -67,27 +67,38 @@ export interface Label {
   sourceCount: number;
 }
 
+/**
+ * Request-options block at slot 0 of every label RPC.
+ *
+ * The live web client sends a longer capability envelope here, but the short
+ * form is still accepted — checked directly, because the longer one was the
+ * obvious suspect when these calls were failing and it was not the cause. The
+ * cause was the id (see below); leaving this short keeps the fix to what was
+ * actually verified.
+ */
+const LABEL_CLIENT_OPTIONS = [2];
+
 export class LabelsRpc {
   constructor(private readonly client: BatchExecuteClient) {}
 
-  /** List labels. Raw: `result[1] = [[name, [[srcId],…], labelId, emoji], …]`. */
+  /** List labels. Raw: `result[0] = [[name, [[srcId],…], labelId, emoji], …]`. */
   async list(notebookId: string): Promise<Label[]> {
     const result = (await this.client.call(
-      'LABEL_MANAGE',
-      [[2], notebookId, null, null, []],
+      'LABEL_LIST',
+      [LABEL_CLIENT_OPTIONS, notebookId],
       `/notebook/${notebookId}`
     )) as unknown;
-    return parseLabels(result);
+    return parseLabels(result, 0);
   }
 
   /** Create a label. Returns the updated label list. */
   async create(notebookId: string, name: string, emoji = ''): Promise<Label[]> {
     const result = (await this.client.call(
-      'LABEL_MANAGE',
-      [[2], notebookId, null, null, null, [[name, emoji]]],
+      'LABEL_CREATE',
+      [LABEL_CLIENT_OPTIONS, notebookId, null, null, null, [[name, emoji]]],
       `/notebook/${notebookId}`
     )) as unknown;
-    return parseLabels(result);
+    return parseLabels(result, 1);
   }
 
   /** Rename a label. */
@@ -202,9 +213,17 @@ export class ResearchRpc {
   }
 }
 
-function parseLabels(result: unknown): Label[] {
-  const raw = Array.isArray((result as unknown[])?.[1])
-    ? ((result as unknown[])[1] as unknown[])
+/**
+ * Read a label list out of a response.
+ *
+ * The two calls wrap it differently: `LABEL_LIST` echoes the labels at index 0,
+ * `LABEL_CREATE` at index 1 (documented in teng-lin/notebooklm-py's labels API,
+ * MIT). Reading index 1 for both is why a successful listing still looked
+ * empty.
+ */
+function parseLabels(result: unknown, index: number): Label[] {
+  const raw = Array.isArray((result as unknown[])?.[index])
+    ? ((result as unknown[])[index] as unknown[])
     : [];
   const out: Label[] = [];
   for (const l of raw) {
