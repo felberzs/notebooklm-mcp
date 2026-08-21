@@ -24,6 +24,7 @@ import {
   isErrorMessage,
 } from '../utils/page-utils.js';
 import { log } from '../utils/logger.js';
+import { t } from '../i18n/index.js';
 import type { ContentType, ContentGenerationInput, ContentGenerationResult } from './types.js';
 import { type ContentTypeConfig, getContentConfig, buildChatPrompt } from './content-templates.js';
 
@@ -126,9 +127,15 @@ export class ContentGenerator {
           .click({ force: true, timeout: 15000 });
         log.info(`  Clicked ${config.displayName} card`);
 
+        // If a language was asked for, generation has to go through the
+        // customisation panel — that is the only place NotebookLM exposes a
+        // language menu, and it sits one level deeper than the format tiles.
+        // Falls back to the plain preset click when the panel is not offered.
+        const customised = input.language ? await this.configureViaCustomize(input) : false;
+
         // If a format-preset dialog opened, pick a preset to start generation.
         // Audio has no dialog (generates directly), so this is a no-op there.
-        await this.selectArtifactPreset(config);
+        if (!customised) await this.selectArtifactPreset(config);
 
         log.info(`  Started ${config.displayName} generation via Studio`);
 
@@ -311,6 +318,110 @@ export class ContentGenerator {
    * We skip the "Créer le vôtre" / "Create your own" customiser and pick the
    * first ready-made preset.
    */
+  /**
+   * Generate through the customisation panel so the output language can be set.
+   *
+   * The format dialog itself has no language control — captured live on
+   * 2026-08-21, it holds only preset tiles and a Generate button. The language
+   * menu lives behind each tile's pencil ("Customize") button, alongside a
+   * free-text description field. Until this existed, the `language` argument
+   * simply never reached the browser path, and generation reported success on
+   * content in the wrong language (#36).
+   *
+   * Anchored on locale-independent handles wherever possible: the pencil is
+   * matched by its `edit` mat-icon ligature and the menu by `role="combobox"`,
+   * so this does not break when the UI is driven in French or Japanese.
+   * Returns false — leaving the caller to take the ordinary preset path — the
+   * moment any step is missing, because generating in the wrong language is
+   * better than not generating at all, and the caller is told either way.
+   */
+  private async configureViaCustomize(input: ContentGenerationInput): Promise<boolean> {
+    const wanted = input.language?.trim();
+    if (!wanted) return false;
+    try {
+      const pencil = this.page.locator('button:has(mat-icon:has-text("edit"))').first();
+      if (!(await pencil.isVisible({ timeout: 4000 }).catch(() => false))) {
+        log.warning('  No customisation control in this dialog — language cannot be set here');
+        return false;
+      }
+      await this.page.mouse.move(0, 0).catch(() => undefined);
+      await pencil.click({ force: true, timeout: 10000 });
+      await randomDelay(1500, 2500);
+
+      const combo = this.page.locator('[role="combobox"]').first();
+      if (!(await combo.isVisible({ timeout: 4000 }).catch(() => false))) {
+        log.warning('  Customisation panel has no language menu');
+        return false;
+      }
+      await combo.click({ force: true, timeout: 10000 });
+      await randomDelay(1200, 2000);
+
+      if (!(await this.pickLanguageOption(wanted))) return false;
+
+      if (input.customInstructions) {
+        const box = this.page.locator('textarea').first();
+        if (await box.isVisible({ timeout: 2000 }).catch(() => false)) {
+          await box.fill(input.customInstructions).catch(() => undefined);
+        }
+      }
+
+      const generateLabel = t('buttons', 'generate');
+      const generate = this.page
+        .locator(
+          `button:has-text("${generateLabel}"), button:has-text("Generate"), button:has-text("Générer")`
+        )
+        .last();
+      if (!(await generate.isVisible({ timeout: 4000 }).catch(() => false))) {
+        log.warning('  Customisation panel has no generate button');
+        return false;
+      }
+      await generate.click({ force: true, timeout: 10000 });
+      log.success(`  Generating in ${wanted} via the customisation panel`);
+      return true;
+    } catch (error) {
+      log.warning(`  Customisation flow failed (${(error as Error).message}); using presets`);
+      return false;
+    }
+  }
+
+  /**
+   * Click the language option whose text is the one asked for.
+   *
+   * Matched on the option's own text rather than a `:has-text()` substring,
+   * which would take "Español" for "Español (Latinoamérica)" whenever that
+   * happened to come first. English is the exception the menu itself creates:
+   * it renders as "English (default)", so a prefix match is allowed when the
+   * option merely extends the wanted name with a parenthesis.
+   */
+  private async pickLanguageOption(wanted: string): Promise<boolean> {
+    const options = await this.page.locator('[role="option"]').all();
+    if (options.length === 0) {
+      log.warning('  Language menu opened but listed nothing');
+      return false;
+    }
+    const norm = (v: string) => v.trim().toLowerCase().normalize('NFC');
+    const target = norm(wanted);
+
+    let prefixMatch: (typeof options)[number] | null = null;
+    for (const option of options) {
+      const text = norm((await option.innerText().catch(() => '')) || '');
+      if (!text) continue;
+      if (text === target) {
+        await option.click({ force: true, timeout: 8000 });
+        await randomDelay(800, 1400);
+        return true;
+      }
+      if (!prefixMatch && text.startsWith(`${target} (`)) prefixMatch = option;
+    }
+    if (prefixMatch) {
+      await prefixMatch.click({ force: true, timeout: 8000 });
+      await randomDelay(800, 1400);
+      return true;
+    }
+    log.warning(`  "${wanted}" is not in NotebookLM's language menu (${options.length} listed)`);
+    return false;
+  }
+
   private async selectArtifactPreset(config: ContentTypeConfig): Promise<void> {
     const anyPreset = this.page.locator('button.primary-action-button').first();
     if (!(await anyPreset.isVisible({ timeout: 4000 }).catch(() => false))) {

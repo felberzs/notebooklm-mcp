@@ -13,7 +13,11 @@
  * catalog below is the accepted set, taken from teng-lin/notebooklm-py (MIT),
  * which derived it from the web app's own `WIZ_global_data`; the values are
  * the native names NotebookLM shows in its language menu, which is what the
- * browser fallback has to click on.
+ * browser fallback has to click on. Nine of them were corrected against the
+ * live menu, captured from the report customisation panel on 2026-08-21: the
+ * reference's names are close but not identical (it says "Bahasa Indonesia"
+ * where the menu says "Indonesia", "Latina" where it says "Latin"), and a name
+ * that does not match the option text is a language silently not applied.
  */
 
 /** Accepted output languages: BCP-47 code → the native name NotebookLM displays. */
@@ -26,7 +30,7 @@ export const CONTENT_LANGUAGES: Record<string, string> = {
   es_MX: 'Español (México)',
   hi: 'हिन्दी',
   ar_001: 'العربية',
-  ar_eg: 'العربية (مصر)',
+  ar_eg: 'العربية (العامية المصرية)',
   pt_BR: 'Português (Brasil)',
   pt_PT: 'Português (Portugal)',
   bn: 'বাংলা',
@@ -34,7 +38,7 @@ export const CONTENT_LANGUAGES: Record<string, string> = {
   ja: '日本語',
   pa: 'ਪੰਜਾਬੀ',
   de: 'Deutsch',
-  jv: 'Basa Jawa',
+  jv: 'Jawa',
   ko: '한국어',
   fr: 'Français',
   fr_CA: 'Français (Canada)',
@@ -53,7 +57,7 @@ export const CONTENT_LANGUAGES: Record<string, string> = {
   ml: 'മലയാളം',
   kn: 'ಕನ್ನಡ',
   or: 'ଓଡ଼ିଆ',
-  my: 'မြန်မာဘာသာ',
+  my: 'မြန်မာ',
   sw: 'Kiswahili',
   nl_NL: 'Nederlands',
   ro: 'Română',
@@ -71,8 +75,8 @@ export const CONTENT_LANGUAGES: Record<string, string> = {
   nn_NO: 'Norsk Nynorsk',
   he: 'עברית',
   iw: 'עברית',
-  id: 'Bahasa Indonesia',
-  ms: 'Bahasa Melayu',
+  id: 'Indonesia',
+  ms: 'Melayu',
   fil: 'Filipino',
   ceb: 'Cebuano',
   sr: 'Српски',
@@ -84,19 +88,19 @@ export const CONTENT_LANGUAGES: Record<string, string> = {
   et: 'Eesti',
   hy: 'Հայերեն',
   ka: 'ქართული',
-  az: 'Azərbaycanca',
+  az: 'azərbaycan',
   af: 'Afrikaans',
   am: 'አማርኛ',
   eu: 'Euskara',
   ca: 'Català',
   gl: 'Galego',
   is: 'Íslenska',
-  la: 'Latina',
+  la: 'Latin',
   ne: 'नेपाली',
   ps: 'پښتو',
   sd: 'سنڌي',
   si: 'සිංහල',
-  ht: 'Kreyòl Ayisyen',
+  ht: 'créole haïtien',
   kok: 'कोंकणी',
   mai: 'मैथिली',
 };
