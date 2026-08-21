@@ -53,14 +53,25 @@ justified in a comment as "the most common Google Account language", which was
 never true. If you were relying on French output, set
 `NOTEBOOKLM_CONTENT_LANGUAGE=fr`.
 
+### Fixed — `manage_labels` was calling the wrong RPC and never worked
+
+Every label operation returned `RPC "LABEL_MANAGE" returned no result — the id
+likely rotated`, listing included. The id had not rotated: listing labels is its
+own RPC (`I3xc3c` / GetLabels) and we were using the create id (`agX4Bc`) for
+both, then reading the result at the wrong index — create echoes the label list
+one slot further along than list does. Found while investigating #34, fixed and
+verified live: create, list and delete now round-trip.
+
 ### Known issue — Studio generation is failing upstream
 
 Separately from #34: `CREATE_STUDIO` currently returns an empty result for every
 artifact type on a valid session, so `content_generate` and
-`generate_study_aid` fall back to the browser. The RPC ids are **not** the
-problem — they match the reference implementation exactly — so the drift message
-suggesting `NOTEBOOKLM_RPC_OVERRIDES` is misleading here. Under investigation;
-mind maps are unaffected.
+`generate_study_aid` fall back to the browser. The RPC id is **not** the
+problem — it matches the reference implementation, as do the artifact type codes
+and payload slots — so the drift message suggesting `NOTEBOOKLM_RPC_OVERRIDES`
+is misleading here. `CREATE_NOTE` (`CYK0Xb`) is empty the same way, which is why
+`generate_mind_map` still fails at the save step even though generation itself
+now works and honours the requested language. Tracked in #35.
 
 ---
 
