@@ -2,7 +2,7 @@
 
 This document tracks planned features, recent implementations, and future ideas for the NotebookLM MCP Server.
 
-## Current Version: v3.1.0
+## Current Version: v3.1.1
 
 ---
 

@@ -7,6 +7,63 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [3.1.1] - 2026-08-21
+
+### Fixed — generated content came out in the server's interface language, not the one you asked for
+
+Reported in #34 by @Javiergomezdev: a Spanish notebook, a Spanish account and
+`language: "Spanish"` produced a French audio overview and a French mind map,
+while the tool reported `status: "ready"`. Nothing signalled the artifact was
+unusable; it surfaced only when someone opened the file.
+
+Three separate faults were stacked here.
+
+**The interface locale was choosing the content language.** `uiLocale` exists so
+the browser fallback's text selectors match the page they are reading. It has no
+business deciding what language an artifact is written in, yet
+`content_generate` fell back to it, and `generate_study_aid` used it outright
+with no way to override. Output language is now its own setting —
+`NOTEBOOKLM_CONTENT_LANGUAGE`, defaulting to English — and every generator takes
+a per-call `language`.
+
+**The `language` argument was documented in a form NotebookLM never accepts.**
+The tool told callers to pass `"Spanish"`; NotebookLM identifies an output
+language by a BCP-47 code. A name landed in the payload slot, matched nothing,
+and the request's `hl` silently decided instead. All 81 supported languages are
+now resolved from a code (`es`, `pt_BR`, `zh_Hans`), an English name
+(`"Spanish"`), or a native name (`"Español"`), and anything unrecognised is
+**refused** rather than quietly generated in another language. The browser path
+gets the native name, which is what NotebookLM's language menu actually
+lists — an English name never matched an option there either.
+
+**`hl` on the request outranks the payload.** Verified live: a mind map carrying
+`"es"` in exactly the slot the protocol specifies came back in German, because
+the request went out as `hl=de`. Generation calls now send the content language
+as `hl`; the same request that returned German now returns Spanish. The mind-map
+payload was also sending an empty language slot and an empty prompt slot, both
+of which are now filled — `generate_mind_map` gains `language` and `focus`.
+
+**`NOTEBOOKLM_UI_LOCALE` no longer discards an unsupported value in silence.**
+Setting it to `es` left you on `fr` without a word, which is what made this take
+a long debugging session to pin down. It now says so, and says where the
+content-language setting lives.
+
+**The default interface locale is now English, not French.** The old default was
+justified in a comment as "the most common Google Account language", which was
+never true. If you were relying on French output, set
+`NOTEBOOKLM_CONTENT_LANGUAGE=fr`.
+
+### Known issue — Studio generation is failing upstream
+
+Separately from #34: `CREATE_STUDIO` currently returns an empty result for every
+artifact type on a valid session, so `content_generate` and
+`generate_study_aid` fall back to the browser. The RPC ids are **not** the
+problem — they match the reference implementation exactly — so the drift message
+suggesting `NOTEBOOKLM_RPC_OVERRIDES` is misleading here. Under investigation;
+mind maps are unaffected.
+
+---
+
 ## [3.1.0] - 2026-08-20
 
 ### Added — read what NotebookLM actually indexed (`source_list`, `source_read`)
