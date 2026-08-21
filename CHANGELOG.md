@@ -7,6 +7,46 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [3.1.2] - 2026-08-21
+
+### Fixed — 3.1.1's browser-path language fix covered one dialog shape out of two
+
+It was written against the report dialog, where the language menu hides behind
+each format tile's pencil, and it looked for that pencil first. **Audio Overview
+and Video Overview have no pencil** — their card opens straight onto a
+customisation panel with the language menu already on it. So the very case the
+original report was about, an audio overview in the wrong language, was still
+not fixed.
+
+The menu is now used when it is already present, and the pencil is only sought
+when it is not. Verified live on the audio dialog: 80 options listed, the
+control moved from `English` to `español`.
+
+Two more faults found by testing it rather than trusting it:
+
+- **The wait was far too short.** These dialogs have been measured taking more
+  than ten seconds to render, and a three-second check does not report "no
+  language menu" — it invents one, and then generates in the wrong language
+  while claiming to know why.
+- **The generate button was searched page-wide**, so it matched a stray button
+  behind the overlay and the panel was declared to have none. The language had
+  in fact been set, so the caller got a warning about a failure that had not
+  happened — the same false-report defect this whole release is about, produced
+  by the fix for it.
+
+Verified end to end across both dialog shapes and four languages: data table in
+Italian, report in Japanese and Brazilian Portuguese, audio menu selection in
+Spanish.
+
+### Added — an unapplied language is now said out loud
+
+When a language is requested and NotebookLM's browser UI offers no way to set
+it for that content type, the result carries a `warnings` entry saying the
+content came back in the account's default language and that the RPC transport
+can set it. Content still generated, caller still told.
+
+---
+
 ## [3.1.1] - 2026-08-21
 
 ### Fixed — generated content came out in the server's interface language, not the one you asked for
