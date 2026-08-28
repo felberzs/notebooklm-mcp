@@ -51,14 +51,13 @@ run: require-claude-cli
 	@echo "==> Starting $(SERVICE)..."
 	@docker compose up -d
 	@docker network connect $(WEB_NETWORK) $(CONTAINER) 2>/dev/null || true
-	@echo "==> Adding MCP server to Claude (in $(CLAUDE_CONTAINER))"
+	@echo "==> Registering MCP server in $(CLAUDE_CONTAINER) (idempotent)"
+	@$(CLAUDE) mcp remove -s user notebooklm >/dev/null 2>&1 || true
 	@$(CLAUDE) mcp add -s user notebooklm -- docker exec -i $(CONTAINER) node dist/index.js
-	@$(CLAUDE) -p "/plugin marketplace add roomi-fields/claude-plugins"
-	@$(CLAUDE) -p "/plugin install rtfm@roomi-fields"
+	@echo "==> Ensuring RTFM plugin is installed in $(CLAUDE_CONTAINER) (idempotent)"
+	@$(CLAUDE) plugin marketplace add roomi-fields/claude-plugins 2>&1 | grep -v -i 'already' || true
+	@$(CLAUDE) plugin install rtfm@roomi-fields 2>&1 | grep -v -i 'already' || true
 	@echo "==> Started. API: http://localhost:3000  VNC: http://localhost:6080/vnc.html"
-	@echo "==> Install RTFM plugin in Claude if not yet done: "
-	@echo "		  /plugin marketplace add roomi-fields/claude-plugins"
-	@echo "		  /plugin install rtfm@roomi-fields"
 
 logs:
 	@echo "==> Tailing $(SERVICE) logs..."
@@ -67,7 +66,7 @@ logs:
 down: require-claude-cli
 	@echo "==> Stopping $(SERVICE)..."
 	@docker compose down
-	@echo "==> Removing MCP server and RTFM plugins from Claude (in $(CLAUDE_CONTAINER))"
-	@$(CLAUDE) mcp remove -s user notebooklm || true
-	@echo "==> Uninstall RTFM plugin from Claude if needed: "
-	@echo "		  /plugin uninstall rtfm@roomi-fields"
+	@echo "==> Unregistering MCP server in $(CLAUDE_CONTAINER)"
+	@$(CLAUDE) mcp remove -s user notebooklm >/dev/null 2>&1 || true
+	@echo "==> RTFM plugin left installed (shared). To remove it manually:"
+	@echo "		  $(CLAUDE) plugin uninstall rtfm@roomi-fields"
