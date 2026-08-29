@@ -14,6 +14,9 @@ services:
       dockerfile: Dockerfile
     image: notebooklm-mcp:latest
     container_name: notebooklm-mcp
+    # Stable hostname so Chrome can break its own stale profile SingletonLock
+    # after a container recreate (it refuses if the lock names "another computer")
+    hostname: notebooklm-mcp
 
     # Port mapping
     ports:
@@ -45,8 +48,9 @@ services:
       # Optional: NotebookLM URL (if you have a default notebook)
       # - NOTEBOOKLM_URL=https://notebooklm.google.com/notebook/YOUR_NOTEBOOK_ID
 
-      # Optional: UI locale (fr or en)
-      - NOTEBOOKLM_UI_LOCALE=fr
+      # Optional: UI locale (fr or en) — also sets the browser locale for the
+      # Google login page during `make auth`
+      - NOTEBOOKLM_UI_LOCALE=en
 
       # Optional: Auto-login settings
       # - AUTO_LOGIN_ENABLED=true
@@ -62,6 +66,11 @@ services:
 
     # Restart policy
     restart: unless-stopped
+
+    # Networks: default (compose-managed) + shared web network so Traefik can reach :6080
+    networks:
+      - default
+      - oxp-web-network
 
     # Health check
     healthcheck:
@@ -82,3 +91,8 @@ services:
 volumes:
   notebooklm-data:
     name: notebooklm-mcp-data
+
+# Shared web network (created by the Traefik stack)
+networks:
+  oxp-web-network:
+    external: true
