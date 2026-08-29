@@ -13,7 +13,7 @@
 
 IMAGE            := notebooklm-mcp:latest
 SERVICE          := oxp-notebooklm-mcp
-CONTAINER        := notebooklm-mcp
+CONTAINER        := oxp-notebooklm-mcp
 WEB_NETWORK      := oxp-web-network
 
 # Claude Code CLI container and the exec wrapper used to drive it.
